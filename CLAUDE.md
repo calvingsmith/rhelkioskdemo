@@ -95,6 +95,7 @@ Conclusions from the current design discussion:
 - Remote access baseline: enable both RDP and VNC against the active kiosk desktop so two remote clients can connect to the same live session.
 - Remote access implementation note: avoid approval/keyring popups in kiosk mode by unlocking keyring at session start (when needed) and using boot-time credential provisioning only.
 - Remote access startup ordering matters: avoid enabling `gnome-remote-desktop.service` persistently for kiosk autologin; start it from kiosk boot logic after keyring/credentials setup.
+- Remote access standard path: use GNOME Remote Desktop (RDP backend) and validate with `xfreerdp` as the primary client.
 - Multi-monitor: support an RDP-based multi-monitor demo if feasible.
 - Demo data: synthetic flight-control-style data with realistic call signs, locations, and periodic updates.
 - Persistence: keep app state and windows alive across RDP disconnects; add a layout reset control for testing.
@@ -109,6 +110,13 @@ Conclusions from the current design discussion:
 - Window locking for alert-style popups should be handled later with real toplevel window behavior, not in-app MDI widgets.
 
 ## Remote access topology options (same live kiosk desktop)
+
+Primary implementation target for this demo is a **single RHEL-compatible path**:
+- Server: GNOME Remote Desktop RDP backend on port 3389
+- Client: `xfreerdp`
+- Provisioning: boot-path only (no runtime SSH mutation of kiosk session state)
+
+Other options below are retained as reference/experiments, not the default direction.
 
 ### Option 1: Single shared endpoint (one VNC port, e.g. 5900)
 
@@ -164,11 +172,14 @@ Conclusions from the current design discussion:
 
 - If `vncviewer` appears to run but no window/prompt appears, run it in foreground with debug output:
   - `vncviewer -Shared -Log *:stderr:100 192.168.122.79:5901`
+- TigerVNC compatibility note: ensure GNOME VNC encryption is set to `['none']` for password-auth interop; `['tls-anon']` can cause "No matching security types".
 - Test alternative endpoint:
   - `vncviewer -Shared 192.168.122.79:5902`
 - `remote-viewer` multi-session testing:
   - start separate processes per endpoint (e.g. one process to `:5901`, another to `:5902`)
   - if needed, force separate launches by running them from separate terminals
+- RDP boot-path config now uses credentials auth with fixed port `3389`; test using `xfreerdp` or `remmina` against `192.168.122.79:3389`.
+- `remote-viewer` may not include RDP support in some builds; for this demo baseline use `xfreerdp`.
 
 ## SSH tunnel role split (current fast-path for separate credentials)
 

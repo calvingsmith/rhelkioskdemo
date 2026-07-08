@@ -9,7 +9,7 @@ APP_NAME="${APP_NAME:-gnomekiosk-demo}"
 APP_BIN="${APP_BIN:-$PWD/build/$APP_NAME}"
 LOCAL_LAUNCHER="${LOCAL_LAUNCHER:-$PWD/scripts/gnome-kiosk-script.sh}"
 ENABLE_REMOTE_ACCESS="${ENABLE_REMOTE_ACCESS:-1}"
-ENABLE_RDP="${ENABLE_RDP:-0}"
+ENABLE_RDP="${ENABLE_RDP:-1}"
 ENABLE_VNC="${ENABLE_VNC:-1}"
 ENABLE_VNC_FANOUT="${ENABLE_VNC_FANOUT:-1}"
 VNC_FANOUT_PORTS="${VNC_FANOUT_PORTS:-5901 5902}"
@@ -108,6 +108,7 @@ cat >/etc/dconf/db/local.d/01-kiosk-remote-desktop <<'CONF'
 [org/gnome/desktop/remote-desktop/vnc]
 enable=false
 auth-method='password'
+encryption=['none']
 view-only=false
 
 [org/gnome/desktop/remote-desktop/rdp]

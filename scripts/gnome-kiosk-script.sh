@@ -12,7 +12,7 @@ if [ -f "$REMOTE_ENV" ]; then
 fi
 
 ENABLE_REMOTE_ACCESS="${ENABLE_REMOTE_ACCESS:-1}"
-ENABLE_RDP="${ENABLE_RDP:-0}"
+ENABLE_RDP="${ENABLE_RDP:-1}"
 ENABLE_VNC="${ENABLE_VNC:-1}"
 RDP_USERNAME="${RDP_USERNAME:-kioskusr}"
 RDP_PASSWORD="${RDP_PASSWORD:-welcome1}"
@@ -63,8 +63,10 @@ setup_remote_access() {
 
         grdctl rdp set-tls-key "$HOME/.local/share/gnome-remote-desktop/tls.key" >>"$REMOTE_LOG" 2>&1
         grdctl rdp set-tls-cert "$HOME/.local/share/gnome-remote-desktop/tls.crt" >>"$REMOTE_LOG" 2>&1
+        grdctl rdp set-auth-methods credentials >>"$REMOTE_LOG" 2>&1
+        grdctl rdp set-credentials "$RDP_USERNAME" "$RDP_PASSWORD" >>"$REMOTE_LOG" 2>&1
         grdctl rdp disable-view-only >>"$REMOTE_LOG" 2>&1
-        grdctl rdp enable-port-negotiation >>"$REMOTE_LOG" 2>&1
+        grdctl rdp disable-port-negotiation >>"$REMOTE_LOG" 2>&1
         grdctl rdp enable >>"$REMOTE_LOG" 2>&1
     else
         grdctl rdp disable >>"$REMOTE_LOG" 2>&1 || true
@@ -75,6 +77,7 @@ setup_remote_access() {
         if [ "$VNC_AUTH_METHOD" = "password" ]; then
             grdctl vnc set-password "$VNC_PASSWORD" >>"$REMOTE_LOG" 2>&1
         fi
+        gsettings set org.gnome.desktop.remote-desktop.vnc encryption "['none']" >>"$REMOTE_LOG" 2>&1
         grdctl vnc disable-view-only >>"$REMOTE_LOG" 2>&1
         grdctl vnc enable-port-negotiation >>"$REMOTE_LOG" 2>&1
         grdctl vnc enable >>"$REMOTE_LOG" 2>&1
