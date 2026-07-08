@@ -1,6 +1,8 @@
 CC ?= cc
 PKG_CONFIG ?= pkg-config
-APP := gnomekiosk-demo
+BUILD_DIR := build
+APP_NAME := gnomekiosk-demo
+APP := $(BUILD_DIR)/$(APP_NAME)
 SRC := src/main.c
 CPPFLAGS +=
 CFLAGS += -std=c11 -Wall -Wextra
@@ -12,6 +14,7 @@ GTK_LIBS := $(shell $(PKG_CONFIG) --libs gtk4 2>/dev/null)
 all: $(APP)
 
 $(APP): $(SRC)
+	mkdir -p $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GTK_CFLAGS) -o $@ $< $(GTK_LIBS) $(LDLIBS)
 
 clean:

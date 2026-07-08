@@ -92,6 +92,9 @@ Conclusions from the current design discussion:
 - App model: a single MDI-style main application with child windows for now.
 - App model update: drop the fake MDI; use separate real GtkWindow toplevels so Mutter handles move/resize/focus/stacking.
 - Session model: multiple RDP endpoints/ports with different access roles.
+- Remote access baseline: enable both RDP and VNC against the active kiosk desktop so two remote clients can connect to the same live session.
+- Remote access implementation note: avoid approval/keyring popups in kiosk mode by unlocking keyring at session start (when needed) and using boot-time credential provisioning only.
+- Remote access startup ordering matters: avoid enabling `gnome-remote-desktop.service` persistently for kiosk autologin; start it from kiosk boot logic after keyring/credentials setup.
 - Multi-monitor: support an RDP-based multi-monitor demo if feasible.
 - Demo data: synthetic flight-control-style data with realistic call signs, locations, and periodic updates.
 - Persistence: keep app state and windows alive across RDP disconnects; add a layout reset control for testing.
@@ -104,3 +107,82 @@ Conclusions from the current design discussion:
 - On update, copy the new build and reboot the VM rather than trying to restart the kiosk session in place.
 - Provisioning should set GNOME power/session defaults for kiosk reliability (no blanking/sleep/lock) via dconf.
 - Window locking for alert-style popups should be handled later with real toplevel window behavior, not in-app MDI widgets.
+
+## Remote access topology options (same live kiosk desktop)
+
+### Option 1: Single shared endpoint (one VNC port, e.g. 5900)
+
+**How it works**
+- All operators connect to the same GNOME Remote Desktop VNC endpoint.
+- Multiple clients can view/control the same live desktop.
+
+**Pros**
+- Simplest and most stable setup in Wayland kiosk.
+- Minimal moving parts.
+- Closest to stock GNOME/Fedora behavior.
+
+**Cons**
+- No per-operator port identity (everyone uses the same endpoint).
+- No native per-operator password/role split on the same shared VNC endpoint.
+- App-side “which operator clicked” is not directly provided by GTK/Wayland input APIs.
+
+### Option 2: Two inbound ports for testing (e.g. 5901 and 5902) to the same live desktop
+
+**How it works**
+- Present two externally visible endpoints for test convenience.
+- Intended for local testing where both clients may originate from the same machine.
+
+**Pros**
+- Easy to test two connections from one terminal/client host.
+- Can tag “entry path” by inbound endpoint in an access layer.
+
+**Cons**
+- A plain TCP proxy alone does **not** provide distinct authentication/authorization.
+- Different passwords/roles per endpoint require an auth-aware gateway/repeater layer, not just port forwarding.
+- Adds operational complexity and more components to harden.
+
+**Current test requirement**
+- For this demo/testing workflow, Option 2 is required so two client paths can be exercised from one terminal host.
+- The design target is separate credentials/roles per path (not just proxying the same access rights).
+- Current implementation provides two ingress ports (5901/5902) that forward to the same live GNOME VNC endpoint (5900) for testing convenience.
+- Important limitation: this fanout preserves one backend auth domain; per-port unique VNC passwords/roles are **not** natively possible without an auth-aware gateway layer.
+
+### Option 3: Reintroduce RDP role endpoints later
+
+**How it works**
+- Use RDP-specific endpointing/credential strategy for role separation.
+
+**Pros**
+- Better alignment with richer auth/role models and enterprise remote workflows.
+- Potentially better performance than VNC for dynamic content.
+
+**Cons**
+- In kiosk autologin, credential storage can trigger keyring/approval UX issues unless carefully provisioned.
+- More integration work needed before it is kiosk-safe and non-interactive at boot.
+
+## Client troubleshooting notes
+
+- If `vncviewer` appears to run but no window/prompt appears, run it in foreground with debug output:
+  - `vncviewer -Shared -Log *:stderr:100 192.168.122.79:5901`
+- Test alternative endpoint:
+  - `vncviewer -Shared 192.168.122.79:5902`
+- `remote-viewer` multi-session testing:
+  - start separate processes per endpoint (e.g. one process to `:5901`, another to `:5902`)
+  - if needed, force separate launches by running them from separate terminals
+
+## SSH tunnel role split (current fast-path for separate credentials)
+
+- Purpose: provide two distinct credentials for two operator paths while still sharing the same live kiosk desktop.
+- Provisioning creates two restricted SSH accounts (default `user`, `supervisor`) with distinct passwords.
+- Each account is constrained to local TCP forwarding only:
+  - `user` -> `127.0.0.1:5901`
+  - `supervisor` -> `127.0.0.1:5902`
+- This gives distinct authentication identities per operator path now, while backend VNC remains one shared desktop/auth domain.
+
+Example usage:
+- Terminal A:
+  - `ssh -N -L 15901:127.0.0.1:5901 user@192.168.122.79`
+  - then connect VNC client to `127.0.0.1:15901`
+- Terminal B:
+  - `ssh -N -L 15902:127.0.0.1:5902 supervisor@192.168.122.79`
+  - then connect VNC client to `127.0.0.1:15902`

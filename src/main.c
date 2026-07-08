@@ -20,6 +20,7 @@ typedef struct {
     const char *id;
     const char *title;
     const char *role;
+    const char *button_label;
     int default_width;
     int default_height;
     GtkWidget *window;
@@ -27,7 +28,9 @@ typedef struct {
     GtkWidget *text_view;
     GtkTextBuffer *buffer;
     GtkWidget *radar_area;
+    GtkWidget *control_button;
     gboolean visible;
+    gboolean minimized;
 } DemoWindow;
 
 typedef struct {
@@ -45,8 +48,9 @@ typedef struct {
     guint radar_tick_id;
     guint data_tick_id;
     guint generation;
+    guint radar_frame;
     double sweep_angle;
-    RadarContact contacts[12];
+    RadarContact contacts[8];
     DemoWindow windows[WIN_COUNT];
 } DemoApp;
 
@@ -68,20 +72,25 @@ static const struct {
     const char *id;
     const char *title;
     const char *role;
+    const char *button_label;
     int default_width;
     int default_height;
 } WINDOW_SPECS[] = {
-    { WIN_RADAR, "radar", "EXTERNAL INTERFACES", "radar", 1100, 760 },
-    { WIN_TRAFFIC, "traffic", "TRAFFIC OVERVIEW", "radar", 420, 260 },
-    { WIN_CLEARANCE, "clearance", "CLEARANCE QUEUE", "tower", 420, 260 },
-    { WIN_GROUND, "ground", "GROUND OPS", "dispatch", 420, 260 },
-    { WIN_STATUS, "status", "SYSTEM STATUS", "control", 760, 170 },
+    { WIN_RADAR, "radar", "EXTERNAL INTERFACES", "radar", "RAD", 1100, 760 },
+    { WIN_TRAFFIC, "traffic", "TRAFFIC OVERVIEW", "radar", "TRF", 420, 260 },
+    { WIN_CLEARANCE, "clearance", "CLEARANCE QUEUE", "tower", "CLR", 420, 260 },
+    { WIN_GROUND, "ground", "GROUND OPS", "dispatch", "GRD", 420, 260 },
+    { WIN_STATUS, "status", "SYSTEM STATUS", "control", "STS", 760, 170 },
 };
 
 static GtkWidget *build_radar_window_content(DemoApp *app);
 static void show_default_windows(DemoApp *app);
-static void reset_default_window_layout(DemoApp *app);
+static void apply_factory_layout(DemoApp *app);
 static gchar *generate_callsign(void);
+static gboolean apply_saved_layout(DemoApp *app);
+static void save_layout(DemoApp *app);
+static GtkWidget *build_window_header(const char *title);
+static GtkWidget *build_thin_titlebar(DemoWindow *win);
 
 static double
 normalize_heading(double heading)
@@ -145,6 +154,66 @@ static DemoWindow *
 find_window(DemoApp *app, DemoWindowKind kind)
 {
     return &app->windows[kind];
+}
+
+static gboolean
+target_to_kind(const char *target, DemoWindowKind *kind)
+{
+    if (g_strcmp0(target, "traffic") == 0)
+        *kind = WIN_TRAFFIC;
+    else if (g_strcmp0(target, "clearance") == 0)
+        *kind = WIN_CLEARANCE;
+    else if (g_strcmp0(target, "ground") == 0)
+        *kind = WIN_GROUND;
+    else if (g_strcmp0(target, "status") == 0)
+        *kind = WIN_STATUS;
+    else if (g_strcmp0(target, "radar") == 0)
+        *kind = WIN_RADAR;
+    else
+        return FALSE;
+    return TRUE;
+}
+
+static void
+update_control_button_state(DemoWindow *win)
+{
+    if (win->control_button == NULL || win->button_label == NULL)
+        return;
+
+    if (!win->visible) {
+        g_autofree gchar *label = g_strdup_printf("(%s)", win->button_label);
+        gtk_button_set_label(GTK_BUTTON(win->control_button), label);
+        return;
+    }
+
+    if (win->minimized) {
+        g_autofree gchar *label = g_strdup_printf("[%s]", win->button_label);
+        gtk_button_set_label(GTK_BUTTON(win->control_button), label);
+        return;
+    }
+
+    gtk_button_set_label(GTK_BUTTON(win->control_button), win->button_label);
+}
+
+static void
+set_window_minimized(DemoWindow *win, gboolean minimized)
+{
+    if (win->kind == WIN_RADAR)
+        return;
+
+    if (minimized) {
+        gtk_window_minimize(GTK_WINDOW(win->window));
+        win->minimized = TRUE;
+        win->visible = TRUE;
+    } else {
+        gtk_window_unminimize(GTK_WINDOW(win->window));
+        gtk_widget_set_visible(win->window, TRUE);
+        gtk_window_present(GTK_WINDOW(win->window));
+        win->minimized = FALSE;
+        win->visible = TRUE;
+    }
+
+    update_control_button_state(win);
 }
 
 static gchar *
@@ -283,8 +352,11 @@ show_window(DemoWindow *win)
 {
     if (win->window != NULL) {
         win->visible = TRUE;
+        win->minimized = FALSE;
         gtk_widget_set_visible(win->window, TRUE);
+        gtk_window_unminimize(GTK_WINDOW(win->window));
         gtk_window_present(GTK_WINDOW(win->window));
+        update_control_button_state(win);
     }
 }
 
@@ -299,30 +371,67 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
 {
     DemoApp *app = user_data;
     const char *target = g_object_get_data(G_OBJECT(button), "target");
+    DemoWindowKind kind;
 
-    if (g_strcmp0(target, "traffic") == 0)
-        show_window_by_kind(app, WIN_TRAFFIC);
-    else if (g_strcmp0(target, "clearance") == 0)
-        show_window_by_kind(app, WIN_CLEARANCE);
-    else if (g_strcmp0(target, "ground") == 0)
-        show_window_by_kind(app, WIN_GROUND);
-    else if (g_strcmp0(target, "status") == 0)
-        show_window_by_kind(app, WIN_STATUS);
-    else if (g_strcmp0(target, "radar") == 0)
-        show_window_by_kind(app, WIN_RADAR);
-    else if (g_strcmp0(target, "all") == 0) {
+    if (target_to_kind(target, &kind)) {
+        DemoWindow *win = find_window(app, kind);
+        if (kind != WIN_RADAR) {
+            if (win->minimized || !win->visible)
+                set_window_minimized(win, FALSE);
+            else
+                set_window_minimized(win, TRUE);
+        } else {
+            show_window_by_kind(app, kind);
+        }
+    } else if (g_strcmp0(target, "all") == 0) {
         for (guint i = 0; i < WIN_COUNT; i++)
             show_window(&app->windows[i]);
+    } else if (g_strcmp0(target, "save") == 0) {
+        save_layout(app);
     } else if (g_strcmp0(target, "reset") == 0) {
         app->generation = 0;
-        reset_default_window_layout(app);
+        apply_factory_layout(app);
+        show_default_windows(app);
+        update_text_windows(app);
+    } else if (g_strcmp0(target, "load") == 0) {
+        if (!apply_saved_layout(app))
+            apply_factory_layout(app);
         show_default_windows(app);
         update_text_windows(app);
     }
 }
 
+static void
+on_window_minimize_clicked(GtkButton *button, gpointer user_data)
+{
+    (void) button;
+    DemoWindow *win = user_data;
+    set_window_minimized(win, TRUE);
+}
+
 static GtkWidget *
-build_panel_header(const char *title)
+build_thin_titlebar(DemoWindow *win)
+{
+    GtkWidget *bar = gtk_header_bar_new();
+    GtkWidget *min_btn = gtk_button_new_with_label("_");
+    GtkWidget *label = gtk_label_new(win->title);
+
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(bar), FALSE);
+    gtk_widget_add_css_class(bar, "motif-thin-titlebar");
+    gtk_widget_add_css_class(min_btn, "motif-thin-title-button");
+    gtk_widget_add_css_class(label, "motif-thin-title-label");
+    gtk_widget_set_tooltip_text(min_btn, "Minimize");
+    gtk_widget_set_focusable(min_btn, FALSE);
+
+    g_signal_connect(min_btn, "clicked", G_CALLBACK(on_window_minimize_clicked), win);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(bar), min_btn);
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(bar), label);
+
+    return bar;
+}
+
+static GtkWidget *
+build_window_header(const char *title)
 {
     GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(bar, "motif-panel-header");
@@ -337,10 +446,9 @@ build_panel_header(const char *title)
 }
 
 static GtkWidget *
-build_text_window_content(const char *title, GtkTextBuffer **out_buffer)
+build_text_window_content(DemoWindow *win, GtkTextBuffer **out_buffer)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *header = build_panel_header(title);
     GtkWidget *scroller = gtk_scrolled_window_new();
     GtkWidget *view = gtk_text_view_new();
 
@@ -356,26 +464,66 @@ build_text_window_content(const char *title, GtkTextBuffer **out_buffer)
 
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), view);
-    gtk_box_append(GTK_BOX(outer), header);
     gtk_box_append(GTK_BOX(outer), scroller);
+
+    if (win->kind == WIN_GROUND) {
+        GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+        GtkWidget *cb1 = gtk_check_button_new_with_label("Suppress Date");
+        GtkWidget *cb2 = gtk_check_button_new_with_label("Suppress Time");
+        GtkWidget *cb3 = gtk_check_button_new_with_label("Suppress Processor");
+
+        gtk_widget_add_css_class(controls, "motif-control-row");
+        gtk_widget_add_css_class(cb1, "motif-check");
+        gtk_widget_add_css_class(cb2, "motif-check");
+        gtk_widget_add_css_class(cb3, "motif-check");
+
+        gtk_box_append(GTK_BOX(controls), cb1);
+        gtk_box_append(GTK_BOX(controls), cb2);
+        gtk_box_append(GTK_BOX(controls), cb3);
+        gtk_box_append(GTK_BOX(outer), controls);
+    }
 
     *out_buffer = buffer;
     return outer;
 }
 
 static GtkWidget *
-build_status_window_content(GtkWidget **out_label)
+build_status_window_content(DemoWindow *win, GtkWidget **out_label)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    GtkWidget *header = build_panel_header("SYSTEM STATUS");
     GtkWidget *label = gtk_label_new("Ready");
+    GtkWidget *form = gtk_grid_new();
+    GtkWidget *user_label = gtk_label_new("USER ID:");
+    GtkWidget *pass_label = gtk_label_new("PASSWORD:");
+    GtkWidget *user_entry = gtk_entry_new();
+    GtkWidget *pass_entry = gtk_entry_new();
+    GtkWidget *sign_on = gtk_button_new_with_label("SIGN ON");
+    GtkWidget *close = gtk_button_new_with_label("MINIMIZE");
 
     gtk_widget_add_css_class(outer, "motif-panel");
     gtk_widget_add_css_class(label, "motif-status-body");
+    gtk_widget_add_css_class(form, "motif-control-row");
+    gtk_widget_add_css_class(user_entry, "motif-entry");
+    gtk_widget_add_css_class(pass_entry, "motif-entry");
+    gtk_widget_add_css_class(sign_on, "motif-button");
+    gtk_widget_add_css_class(close, "motif-button");
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(outer), header);
+    gtk_entry_set_visibility(GTK_ENTRY(pass_entry), FALSE);
+
+    gtk_grid_set_column_spacing(GTK_GRID(form), 8);
+    gtk_grid_set_row_spacing(GTK_GRID(form), 4);
+    gtk_grid_attach(GTK_GRID(form), user_label, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(form), user_entry, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(form), pass_label, 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(form), pass_entry, 3, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(form), sign_on, 4, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(form), close, 5, 0, 1, 1);
+
+    g_signal_connect(close, "clicked", G_CALLBACK(on_window_minimize_clicked), win);
+
     gtk_box_append(GTK_BOX(outer), label);
+    gtk_box_append(GTK_BOX(outer), form);
 
     *out_label = label;
     return outer;
@@ -387,6 +535,8 @@ on_close_request(GtkWindow *window, gpointer user_data)
     DemoWindow *win = user_data;
     gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
     win->visible = FALSE;
+    win->minimized = FALSE;
+    update_control_button_state(win);
     return TRUE;
 }
 
@@ -400,11 +550,11 @@ draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer us
     double cy = height / 2.0;
     double radius = MIN(width, height) / 2.0 - 40.0;
 
-    cairo_set_source_rgb(cr, 0.62, 0.62, 0.62);
+    cairo_set_source_rgb(cr, 0.60, 0.60, 0.60);
     cairo_paint(cr);
 
     cairo_set_line_width(cr, 1.0);
-    cairo_set_source_rgba(cr, 0.28, 0.28, 0.28, 0.75);
+    cairo_set_source_rgba(cr, 0.24, 0.24, 0.24, 0.75);
     for (int i = 1; i <= 5; i++) {
         cairo_arc(cr, cx, cy, radius * i / 5.0, 0, G_PI * 2.0);
         cairo_stroke(cr);
@@ -423,13 +573,13 @@ draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer us
     }
     cairo_stroke(cr);
 
-    cairo_set_source_rgba(cr, 0.12, 0.36, 0.2, 0.18);
+    cairo_set_source_rgba(cr, 0.08, 0.30, 0.16, 0.14);
     cairo_arc(cr, cx, cy, radius * 0.82, app->sweep_angle - 0.16, app->sweep_angle);
     cairo_line_to(cr, cx, cy);
     cairo_close_path(cr);
     cairo_fill(cr);
 
-    cairo_set_source_rgba(cr, 0.14, 0.28, 0.14, 0.92);
+    cairo_set_source_rgba(cr, 0.10, 0.25, 0.12, 0.95);
     for (guint i = 0; i < G_N_ELEMENTS(app->contacts); i++) {
         RadarContact *c = &app->contacts[i];
         double px = cx + c->x * radius;
@@ -443,7 +593,7 @@ draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer us
             c->callsign,
             (guint)c->heading,
             (guint)c->speed);
-        cairo_set_font_size(cr, 11.0);
+        cairo_set_font_size(cr, 10.0);
         cairo_move_to(cr, px + 6.0, py - 6.0);
         cairo_show_text(cr, label);
         cairo_set_source_rgba(cr, 0.14, 0.28, 0.14, 0.92);
@@ -465,15 +615,26 @@ apply_css(DemoApp *app)
     app->css_provider = gtk_css_provider_new();
     gtk_css_provider_load_from_string(
         app->css_provider,
-        ".motif-panel { background: #b4b4b4; border: 1px solid #eeeeee; border-right-color: #5f5f5f; border-bottom-color: #5f5f5f; border-radius: 0; padding: 4px; }"
-        ".motif-panel-header { background: #85aeb0; border: 1px solid #b9d3d4; border-right-color: #4e6e70; border-bottom-color: #4e6e70; border-radius: 0; padding: 2px 6px; min-height: 22px; }"
-        ".motif-panel-title { color: #f2f2f2; font-weight: 700; }"
-        ".motif-toolbar { background: #a6a6a6; padding: 1px; border: 1px solid #dddddd; border-right-color: #666666; border-bottom-color: #666666; border-radius: 0; }"
-        ".motif-button { background: #c2c2c2; color: #111; border: 1px solid #dddddd; border-top-color: #f8f8f8; border-left-color: #f8f8f8; border-right-color: #565656; border-bottom-color: #565656; border-radius: 0; min-height: 22px; padding: 2px 6px; }"
-        ".motif-button:hover { background: #c8c8c8; }"
-        ".motif-text { background: #d8d8d8; color: #111; padding: 6px; font-family: monospace; font-size: 10pt; }"
-        ".motif-status-body { background: #d8d8d8; color: #111; padding: 6px; }"
-        ".radar-surface { background: #9d9d9d; }");
+        "* { border-radius: 0; }"
+        ".motif-panel, .motif-panel-header, .motif-panel-title, .motif-toolbar, .motif-button, .motif-text, .motif-status-body { font-family: 'Liberation Mono', 'Nimbus Mono PS', monospace; font-variant: small-caps; letter-spacing: 0.35px; }"
+        ".motif-panel { background: #a9a9a9; border: 1px solid #efefef; border-right-color: #4f4f4f; border-bottom-color: #4f4f4f; padding: 3px; }"
+        ".motif-panel-header { background: #7eaeb1; border: 1px solid #acd0d2; border-right-color: #45686a; border-bottom-color: #45686a; padding: 0px 6px; min-height: 18px; }"
+        ".motif-panel-title { color: #f3f3f3; font-weight: 700; font-size: 10pt; }"
+        ".motif-toolbar { background: #9f9f9f; padding: 1px; border: 1px solid #ececec; border-right-color: #595959; border-bottom-color: #595959; }"
+        ".motif-layout-label { color: #202020; font-size: 8.5pt; font-weight: 700; font-family: 'Liberation Mono', 'Nimbus Mono PS', monospace; font-variant: small-caps; padding: 0px 2px; }"
+        ".motif-button { background: #bebebe; color: #111; border: 1px solid #dcdcdc; border-top-color: #f6f6f6; border-left-color: #f6f6f6; border-right-color: #505050; border-bottom-color: #505050; min-height: 18px; min-width: 40px; padding: 0px 6px; font-weight: 700; font-size: 9.5pt; }"
+        ".motif-button:hover { background: #c6c6c6; }"
+        ".motif-button:active { background: #adadad; border-top-color: #505050; border-left-color: #505050; border-right-color: #f6f6f6; border-bottom-color: #f6f6f6; }"
+        ".motif-thin-titlebar { min-height: 16px; padding: 0px 4px; border: 1px solid #c8c8c8; border-right-color: #575757; border-bottom-color: #575757; background: #bdbdbd; }"
+        ".motif-thin-titlebar .title { min-height: 16px; margin: 0; }"
+        ".motif-thin-title-button { background: #bebebe; color: #111; border: 1px solid #dcdcdc; border-top-color: #f6f6f6; border-left-color: #f6f6f6; border-right-color: #505050; border-bottom-color: #505050; min-height: 14px; min-width: 18px; padding: 0px 2px; font-weight: 700; }"
+        ".motif-thin-title-label { color: #202020; font-size: 9pt; font-weight: 700; font-family: 'Liberation Mono', 'Nimbus Mono PS', monospace; font-variant: small-caps; }"
+        ".motif-text { background: #d5d5d5; color: #101010; padding: 4px; border: 1px solid #5c5c5c; border-top-color: #f0f0f0; border-left-color: #f0f0f0; font-size: 9.5pt; }"
+        ".motif-status-body { background: #d5d5d5; color: #101010; padding: 4px; border: 1px solid #5c5c5c; border-top-color: #f0f0f0; border-left-color: #f0f0f0; font-size: 9.5pt; }"
+        ".motif-control-row { background: #b0b0b0; padding: 4px; border-top: 1px solid #e7e7e7; border-left: 1px solid #e7e7e7; border-right: 1px solid #5d5d5d; border-bottom: 1px solid #5d5d5d; }"
+        ".motif-entry { min-width: 120px; background: #d6d6d6; color: #111; border: 1px solid #5d5d5d; border-top-color: #efefef; border-left-color: #efefef; padding: 1px 4px; }"
+        ".motif-check { color: #111; }"
+        ".radar-surface { background: #9b9b9b; border: 1px solid #5d5d5d; border-top-color: #f0f0f0; border-left-color: #f0f0f0; }");
 
     gtk_style_context_add_provider_for_display(
         gdk_display_get_default(),
@@ -488,6 +649,8 @@ create_window(DemoApp *app, DemoWindow *win, const char *title, int width, int h
     gtk_window_set_title(GTK_WINDOW(win->window), title);
     gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
     gtk_window_set_decorated(GTK_WINDOW(win->window), TRUE);
+    if (win->kind != WIN_RADAR)
+        gtk_window_set_titlebar(GTK_WINDOW(win->window), build_thin_titlebar(win));
     g_signal_connect(win->window, "close-request", G_CALLBACK(on_close_request), win);
 }
 
@@ -500,23 +663,24 @@ build_windows(DemoApp *app)
         win->id = WINDOW_SPECS[i].id;
         win->title = WINDOW_SPECS[i].title;
         win->role = WINDOW_SPECS[i].role;
+        win->button_label = WINDOW_SPECS[i].button_label;
         win->default_width = WINDOW_SPECS[i].default_width;
         win->default_height = WINDOW_SPECS[i].default_height;
         win->visible = TRUE;
+        win->minimized = FALSE;
 
         create_window(app, win, win->title, win->default_width, win->default_height);
     }
 
     gtk_window_set_child(GTK_WINDOW(app->windows[WIN_RADAR].window), build_radar_window_content(app));
-    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_TRAFFIC].window), build_text_window_content("TRAFFIC OVERVIEW", &app->windows[WIN_TRAFFIC].buffer));
-    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_CLEARANCE].window), build_text_window_content("CLEARANCE QUEUE", &app->windows[WIN_CLEARANCE].buffer));
-    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_GROUND].window), build_text_window_content("GROUND OPS", &app->windows[WIN_GROUND].buffer));
-    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_STATUS].window), build_status_window_content(&app->windows[WIN_STATUS].status_label));
-
-    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_TRAFFIC].window), FALSE);
-    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_CLEARANCE].window), FALSE);
-    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_GROUND].window), FALSE);
-    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_STATUS].window), FALSE);
+    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_TRAFFIC].window), build_text_window_content(&app->windows[WIN_TRAFFIC], &app->windows[WIN_TRAFFIC].buffer));
+    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_CLEARANCE].window), build_text_window_content(&app->windows[WIN_CLEARANCE], &app->windows[WIN_CLEARANCE].buffer));
+    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_GROUND].window), build_text_window_content(&app->windows[WIN_GROUND], &app->windows[WIN_GROUND].buffer));
+    gtk_window_set_child(GTK_WINDOW(app->windows[WIN_STATUS].window), build_status_window_content(&app->windows[WIN_STATUS], &app->windows[WIN_STATUS].status_label));
+    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_TRAFFIC].window), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_CLEARANCE].window), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_GROUND].window), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_STATUS].window), TRUE);
 
 }
 
@@ -524,10 +688,15 @@ static GtkWidget *
 build_radar_window_content(DemoApp *app)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *header = build_panel_header("M & C GLOBAL MENU");
+    GtkWidget *header = build_window_header("M & C GLOBAL MENU");
     GtkWidget *button_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *window_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    GtkWidget *layout_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
+    GtkWidget *layout_label = gtk_label_new("Layout");
+    GtkWidget *layout_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget *status = gtk_label_new("Booting...");
-    GtkWidget *radar_header = build_panel_header("EXTERNAL INTERFACES");
+    GtkWidget *radar_header = build_window_header("EXTERNAL INTERFACES");
     GtkWidget *drawing = gtk_drawing_area_new();
     const struct {
         const char *label;
@@ -539,23 +708,52 @@ build_radar_window_content(DemoApp *app)
         { "STS", "status" },
         { "RAD", "radar" },
         { "ALL", "all" },
+    };
+    const struct {
+        const char *label;
+        const char *target;
+    } layout_actions[] = {
+        { "SAVE", "save" },
+        { "LOAD", "load" },
         { "RESET", "reset" },
     };
 
     gtk_widget_add_css_class(outer, "motif-panel");
     gtk_widget_add_css_class(button_row, "motif-toolbar");
+    gtk_widget_add_css_class(layout_label, "motif-layout-label");
     gtk_label_set_wrap(GTK_LABEL(status), TRUE);
     gtk_widget_set_hexpand(status, TRUE);
     gtk_widget_set_halign(status, GTK_ALIGN_FILL);
     gtk_widget_add_css_class(status, "motif-status-body");
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_widget_set_halign(layout_section, GTK_ALIGN_END);
+    gtk_widget_set_halign(layout_label, GTK_ALIGN_END);
 
     for (guint i = 0; i < G_N_ELEMENTS(buttons); i++) {
         GtkWidget *btn = gtk_button_new_with_label(buttons[i].label);
+        DemoWindowKind kind;
         gtk_widget_add_css_class(btn, "motif-button");
         g_object_set_data_full(G_OBJECT(btn), "target", g_strdup(buttons[i].target), g_free);
         g_signal_connect(btn, "clicked", G_CALLBACK(on_menu_button_clicked), app);
-        gtk_box_append(GTK_BOX(button_row), btn);
+        gtk_box_append(GTK_BOX(window_buttons), btn);
+
+        if (target_to_kind(buttons[i].target, &kind))
+            app->windows[kind].control_button = btn;
     }
+
+    for (guint i = 0; i < G_N_ELEMENTS(layout_actions); i++) {
+        GtkWidget *btn = gtk_button_new_with_label(layout_actions[i].label);
+        gtk_widget_add_css_class(btn, "motif-button");
+        g_object_set_data_full(G_OBJECT(btn), "target", g_strdup(layout_actions[i].target), g_free);
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_menu_button_clicked), app);
+        gtk_box_append(GTK_BOX(layout_buttons), btn);
+    }
+
+    gtk_box_append(GTK_BOX(layout_section), layout_label);
+    gtk_box_append(GTK_BOX(layout_section), layout_buttons);
+    gtk_box_append(GTK_BOX(button_row), window_buttons);
+    gtk_box_append(GTK_BOX(button_row), spacer);
+    gtk_box_append(GTK_BOX(button_row), layout_section);
 
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_radar, app, NULL);
     gtk_widget_set_hexpand(drawing, TRUE);
@@ -573,22 +771,37 @@ build_radar_window_content(DemoApp *app)
     return outer;
 }
 
-static void
+static gboolean
 apply_saved_layout(DemoApp *app)
 {
     g_autoptr(GKeyFile) keyfile = g_key_file_new();
     if (!g_key_file_load_from_file(keyfile, app->config_path, G_KEY_FILE_NONE, NULL))
-        return;
+        return FALSE;
 
     for (guint i = 0; i < WIN_COUNT; i++) {
         DemoWindow *win = &app->windows[i];
         win->visible = TRUE;
+        win->minimized = FALSE;
         if (g_key_file_has_key(keyfile, win->id, "width", NULL)) {
             int width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
             int height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
             gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
         }
+        if (g_key_file_has_key(keyfile, win->id, "visible", NULL))
+            win->visible = g_key_file_get_boolean(keyfile, win->id, "visible", NULL);
+        if (g_key_file_has_key(keyfile, win->id, "maximized", NULL)) {
+            gboolean maximized = g_key_file_get_boolean(keyfile, win->id, "maximized", NULL);
+            if (maximized)
+                gtk_window_maximize(GTK_WINDOW(win->window));
+            else
+                gtk_window_unmaximize(GTK_WINDOW(win->window));
+        }
+        if (g_key_file_has_key(keyfile, win->id, "minimized", NULL))
+            win->minimized = g_key_file_get_boolean(keyfile, win->id, "minimized", NULL);
+
+        update_control_button_state(win);
     }
+    return TRUE;
 }
 
 static void
@@ -604,6 +817,8 @@ save_layout(DemoApp *app)
         g_key_file_set_integer(keyfile, win->id, "width", width);
         g_key_file_set_integer(keyfile, win->id, "height", height);
         g_key_file_set_boolean(keyfile, win->id, "visible", win->visible);
+        g_key_file_set_boolean(keyfile, win->id, "maximized", gtk_window_is_maximized(GTK_WINDOW(win->window)));
+        g_key_file_set_boolean(keyfile, win->id, "minimized", win->minimized);
     }
 
     gsize len = 0;
@@ -615,8 +830,12 @@ static gboolean
 on_radar_tick(gpointer user_data)
 {
     DemoApp *app = user_data;
+    if (!gtk_widget_get_mapped(app->windows[WIN_RADAR].radar_area))
+        return G_SOURCE_CONTINUE;
+
+    app->radar_frame++;
     double previous = app->sweep_angle;
-    app->sweep_angle += 0.03;
+    app->sweep_angle += 0.06;
     if (app->sweep_angle > G_PI * 2.0)
         app->sweep_angle -= G_PI * 2.0;
     if (app->sweep_angle < previous)
@@ -637,19 +856,19 @@ on_data_tick(gpointer user_data)
 }
 
 static void
-reset_default_window_layout(DemoApp *app)
+apply_factory_layout(DemoApp *app)
 {
     for (guint i = 0; i < WIN_COUNT; i++) {
         DemoWindow *win = &app->windows[i];
-        GtkWidget *child = gtk_window_get_child(GTK_WINDOW(win->window));
         gtk_window_unfullscreen(GTK_WINDOW(win->window));
-        if (win->kind != WIN_RADAR)
-            gtk_window_unmaximize(GTK_WINDOW(win->window));
+        gtk_window_unmaximize(GTK_WINDOW(win->window));
+        gtk_window_unminimize(GTK_WINDOW(win->window));
+        win->minimized = FALSE;
+        win->visible = TRUE;
         gtk_window_set_default_size(GTK_WINDOW(win->window), win->default_width, win->default_height);
-        if (child != NULL)
-            gtk_widget_set_size_request(child, win->default_width, win->default_height);
         if (win->kind == WIN_RADAR)
             gtk_window_maximize(GTK_WINDOW(win->window));
+        update_control_button_state(win);
     }
 }
 
@@ -657,8 +876,15 @@ static void
 show_default_windows(DemoApp *app)
 {
     for (guint i = 0; i < WIN_COUNT; i++) {
-        app->windows[i].visible = TRUE;
-        gtk_widget_set_visible(app->windows[i].window, TRUE);
+        DemoWindow *win = &app->windows[i];
+        if (win->visible) {
+            gtk_widget_set_visible(win->window, TRUE);
+            if (win->minimized && win->kind != WIN_RADAR)
+                gtk_window_minimize(GTK_WINDOW(win->window));
+        } else {
+            gtk_widget_set_visible(win->window, FALSE);
+        }
+        update_control_button_state(win);
     }
 
     gtk_window_present(GTK_WINDOW(app->windows[WIN_RADAR].window));
@@ -678,12 +904,12 @@ demo_app_activate(GtkApplication *application, gpointer user_data)
     apply_css(app);
     build_windows(app);
     init_contacts(app);
-    apply_saved_layout(app);
-    reset_default_window_layout(app);
+    if (!apply_saved_layout(app))
+        apply_factory_layout(app);
     update_text_windows(app);
     show_default_windows(app);
 
-    app->radar_tick_id = g_timeout_add(33, on_radar_tick, app);
+    app->radar_tick_id = g_timeout_add(1000, on_radar_tick, app);
     app->data_tick_id = g_timeout_add_seconds(4, on_data_tick, app);
 }
 
