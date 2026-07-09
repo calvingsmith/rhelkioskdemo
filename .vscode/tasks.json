@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Meson: setup or reconfigure",
+      "type": "shell",
+      "command": "sh",
+      "args": [
+        "-c",
+        "meson setup build --reconfigure || meson setup build"
+      ],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Meson: compile",
+      "type": "shell",
+      "command": "meson",
+      "args": [
+        "compile",
+        "-C",
+        "build"
+      ],
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "dependsOn": "Meson: setup or reconfigure"
+    }
+  ]
+}
