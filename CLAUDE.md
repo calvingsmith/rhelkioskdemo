@@ -100,6 +100,28 @@ Conclusions from the current design discussion:
 - Demo data: synthetic flight-control-style data with realistic call signs, locations, and periodic updates.
 - Persistence: keep app state and windows alive across RDP disconnects; add a layout reset control for testing.
 
+## Layout persistence behavior (GTK4/Wayland)
+
+- We changed layout save/load to persist **live window size/state** (not only default size), so SAVE/LOAD now restores dimensions and minimize/maximize/visibility more reliably.
+- Why this change was needed:
+  - Previous implementation saved `gtk_window_get_default_size()` values, which are initial defaults and do not reliably match user-resized live geometry.
+  - This caused SAVE/LOAD to appear ineffective after manual resize/rearrange actions.
+- Current platform limitation (important):
+  - On GTK4 + Wayland, toplevel position is controlled by the compositor (Mutter).
+  - Applications generally cannot freely read/set absolute X/Y coordinates for normal toplevel windows.
+  - As a result, exact coordinate restoration (old X11-style “put this window at x,y”) is not guaranteed/available in the current model.
+- Practical outcome:
+  - Size + state persistence is supported.
+  - Absolute position persistence is not currently supported with plain GTK4 toplevel APIs on Wayland kiosk.
+
+## Deterministic placement plan (next phase)
+
+To get predictable startup placement on RHEL10 while staying on supported components, evaluate in this order:
+
+1. **Compositor-managed strategy first**: rely on Mutter placement rules/behavior and controlled map order for repeatable startup layouts.
+2. **If strict coordinates are required**: use an in-app managed workspace model (single primary surface that arranges child panels internally), trading off some native toplevel behavior.
+3. Keep RDP baseline unchanged (`gnome-remote-desktop` + `xfreerdp`) during this validation so remote behavior remains stable while layout strategy is tested.
+
 ## Kiosk configuration approach
 
 - The existing kiosk config does not need to be preserved; we can replace it with a clean demo-oriented setup.

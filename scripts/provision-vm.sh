@@ -4,6 +4,7 @@ set -euo pipefail
 HOST="${HOST:-192.168.122.79}"
 REMOTE_USER="${REMOTE_USER:-ansible}"
 KIOSK_USER="${KIOSK_USER:-kioskusr}"
+KIOSK_PASSWORD="${KIOSK_PASSWORD:-welcome1}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_demo}"
 APP_NAME="${APP_NAME:-gnomekiosk-demo}"
 APP_BIN="${APP_BIN:-$PWD/build/$APP_NAME}"
@@ -50,13 +51,28 @@ scp "${SSH_OPTS[@]}" "$LOCAL_LAUNCHER" "$REMOTE_USER@$HOST:/tmp/gnome-kiosk-scri
 ssh -tt "${SSH_OPTS[@]}" "$REMOTE_USER@$HOST" "sudo -n bash -s" <<EOF
 set -euo pipefail
 
-dnf -y install gnome-kiosk gtk4 dconf gnome-remote-desktop openssl seahorse socat
+dnf -y install gnome-kiosk gnome-kiosk-script-session gtk4 dconf gnome-remote-desktop openssl seahorse socat
 
+if ! id -u "$KIOSK_USER" >/dev/null 2>&1; then
+    useradd -m -s /bin/bash "$KIOSK_USER"
+    printf '%s:%s\n' "$KIOSK_USER" "$KIOSK_PASSWORD" | chpasswd
+fi
+
+install -d /var/lib/AccountsService/users
+cat >"/var/lib/AccountsService/users/$KIOSK_USER" <<CONF
+[User]
+Session=gnome-kiosk-script-wayland
+SystemAccount=false
+CONF
+
+install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.local"
+install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.config"
 install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.local/bin"
 install -m 0755 /tmp/$APP_NAME "/home/$KIOSK_USER/.local/bin/$APP_NAME"
 install -m 0755 /tmp/gnome-kiosk-script "/home/$KIOSK_USER/.local/bin/gnome-kiosk-script"
 install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.config/gnome-kiosk-demo"
 install -d -o "$KIOSK_USER" -g "$KIOSK_USER" "/home/$KIOSK_USER/.config/systemd/user/default.target.wants"
+chown "$KIOSK_USER:$KIOSK_USER" "/home/$KIOSK_USER/.local" "/home/$KIOSK_USER/.config"
 
 # Prevent gnome-remote-desktop from auto-starting before kiosk boot logic runs.
 rm -f "/home/$KIOSK_USER/.config/systemd/user/default.target.wants/gnome-remote-desktop.service"

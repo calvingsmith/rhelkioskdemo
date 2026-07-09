@@ -50,6 +50,9 @@ typedef struct {
     guint generation;
     guint radar_frame;
     double sweep_angle;
+    cairo_surface_t *radar_static_surface;
+    int radar_cache_width;
+    int radar_cache_height;
     RadarContact contacts[8];
     DemoWindow windows[WIN_COUNT];
 } DemoApp;
@@ -91,6 +94,9 @@ static gboolean apply_saved_layout(DemoApp *app);
 static void save_layout(DemoApp *app);
 static GtkWidget *build_window_header(const char *title);
 static GtkWidget *build_thin_titlebar(DemoWindow *win);
+static void clear_radar_cache(DemoApp *app);
+static void persistable_window_size(DemoWindow *win, int *width, int *height);
+static void apply_window_size(DemoWindow *win, int width, int height);
 
 static double
 normalize_heading(double heading)
@@ -541,11 +547,19 @@ on_close_request(GtkWindow *window, gpointer user_data)
 }
 
 static void
-draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data)
+clear_radar_cache(DemoApp *app)
 {
-    DemoApp *app = user_data;
-    (void)area;
+    if (app->radar_static_surface != NULL) {
+        cairo_surface_destroy(app->radar_static_surface);
+        app->radar_static_surface = NULL;
+    }
+    app->radar_cache_width = 0;
+    app->radar_cache_height = 0;
+}
 
+static void
+draw_radar_static_layer(cairo_t *cr, int width, int height)
+{
     double cx = width / 2.0;
     double cy = height / 2.0;
     double radius = MIN(width, height) / 2.0 - 40.0;
@@ -573,32 +587,6 @@ draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer us
     }
     cairo_stroke(cr);
 
-    cairo_set_source_rgba(cr, 0.08, 0.30, 0.16, 0.14);
-    cairo_arc(cr, cx, cy, radius * 0.82, app->sweep_angle - 0.16, app->sweep_angle);
-    cairo_line_to(cr, cx, cy);
-    cairo_close_path(cr);
-    cairo_fill(cr);
-
-    cairo_set_source_rgba(cr, 0.10, 0.25, 0.12, 0.95);
-    for (guint i = 0; i < G_N_ELEMENTS(app->contacts); i++) {
-        RadarContact *c = &app->contacts[i];
-        double px = cx + c->x * radius;
-        double py = cy + c->y * radius;
-        char label[64];
-
-        cairo_arc(cr, px, py, 2.8, 0, G_PI * 2.0);
-        cairo_fill(cr);
-
-        g_snprintf(label, sizeof(label), "%s H%03u %uKT",
-            c->callsign,
-            (guint)c->heading,
-            (guint)c->speed);
-        cairo_set_font_size(cr, 10.0);
-        cairo_move_to(cr, px + 6.0, py - 6.0);
-        cairo_show_text(cr, label);
-        cairo_set_source_rgba(cr, 0.14, 0.28, 0.14, 0.92);
-    }
-
     cairo_set_source_rgba(cr, 0.12, 0.12, 0.12, 0.9);
     cairo_select_font_face(cr, "monospace", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
     cairo_set_font_size(cr, 13.0);
@@ -606,7 +594,70 @@ draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer us
     cairo_show_text(cr, "EXTERNAL INTERFACES");
     cairo_move_to(cr, 28, 52);
     cairo_show_text(cr, "RADAR IMAGE / FLIGHT CONTROL SURFACE");
+}
 
+static void
+ensure_radar_cache(DemoApp *app, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+        return;
+
+    if (app->radar_static_surface != NULL &&
+        app->radar_cache_width == width &&
+        app->radar_cache_height == height)
+        return;
+
+    clear_radar_cache(app);
+    app->radar_static_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
+    app->radar_cache_width = width;
+    app->radar_cache_height = height;
+
+    cairo_t *cache_cr = cairo_create(app->radar_static_surface);
+    draw_radar_static_layer(cache_cr, width, height);
+    cairo_destroy(cache_cr);
+}
+
+static void
+draw_radar(GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer user_data)
+{
+    DemoApp *app = user_data;
+    (void)area;
+
+    ensure_radar_cache(app, width, height);
+    if (app->radar_static_surface != NULL) {
+        cairo_set_source_surface(cr, app->radar_static_surface, 0, 0);
+        cairo_paint(cr);
+    }
+
+    double cx = width / 2.0;
+    double cy = height / 2.0;
+    double radius = MIN(width, height) / 2.0 - 40.0;
+
+    cairo_set_source_rgba(cr, 0.08, 0.30, 0.16, 0.14);
+    cairo_arc(cr, cx, cy, radius * 0.82, app->sweep_angle - 0.16, app->sweep_angle);
+    cairo_line_to(cr, cx, cy);
+    cairo_close_path(cr);
+    cairo_fill(cr);
+
+    for (guint i = 0; i < G_N_ELEMENTS(app->contacts); i++) {
+        RadarContact *c = &app->contacts[i];
+        double px = cx + c->x * radius;
+        double py = cy + c->y * radius;
+        char label[64];
+
+        cairo_set_source_rgba(cr, 0.10, 0.25, 0.12, 0.95);
+        cairo_arc(cr, px, py, 2.8, 0, G_PI * 2.0);
+        cairo_fill(cr);
+
+        g_snprintf(label, sizeof(label), "%s H%03u %uKT",
+            c->callsign,
+            (guint)c->heading,
+            (guint)c->speed);
+        cairo_set_source_rgba(cr, 0.14, 0.28, 0.14, 0.92);
+        cairo_set_font_size(cr, 10.0);
+        cairo_move_to(cr, px + 6.0, py - 6.0);
+        cairo_show_text(cr, label);
+    }
 }
 
 static void
@@ -785,7 +836,7 @@ apply_saved_layout(DemoApp *app)
         if (g_key_file_has_key(keyfile, win->id, "width", NULL)) {
             int width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
             int height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
-            gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
+            apply_window_size(win, width, height);
         }
         if (g_key_file_has_key(keyfile, win->id, "visible", NULL))
             win->visible = g_key_file_get_boolean(keyfile, win->id, "visible", NULL);
@@ -813,7 +864,7 @@ save_layout(DemoApp *app)
         DemoWindow *win = &app->windows[i];
         int width = 0;
         int height = 0;
-        gtk_window_get_default_size(GTK_WINDOW(win->window), &width, &height);
+        persistable_window_size(win, &width, &height);
         g_key_file_set_integer(keyfile, win->id, "width", width);
         g_key_file_set_integer(keyfile, win->id, "height", height);
         g_key_file_set_boolean(keyfile, win->id, "visible", win->visible);
@@ -856,6 +907,38 @@ on_data_tick(gpointer user_data)
 }
 
 static void
+persistable_window_size(DemoWindow *win, int *width, int *height)
+{
+    int current_width = gtk_widget_get_width(win->window);
+    int current_height = gtk_widget_get_height(win->window);
+
+    if (current_width > 1 && current_height > 1) {
+        *width = current_width;
+        *height = current_height;
+        return;
+    }
+
+    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(win->window));
+    if (surface != NULL) {
+        current_width = gdk_surface_get_width(surface);
+        current_height = gdk_surface_get_height(surface);
+    }
+    if (current_width > 1 && current_height > 1) {
+        *width = current_width;
+        *height = current_height;
+        return;
+    }
+
+    gtk_window_get_default_size(GTK_WINDOW(win->window), width, height);
+}
+
+static void
+apply_window_size(DemoWindow *win, int width, int height)
+{
+    gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
+}
+
+static void
 apply_factory_layout(DemoApp *app)
 {
     for (guint i = 0; i < WIN_COUNT; i++) {
@@ -865,7 +948,7 @@ apply_factory_layout(DemoApp *app)
         gtk_window_unminimize(GTK_WINDOW(win->window));
         win->minimized = FALSE;
         win->visible = TRUE;
-        gtk_window_set_default_size(GTK_WINDOW(win->window), win->default_width, win->default_height);
+        apply_window_size(win, win->default_width, win->default_height);
         if (win->kind == WIN_RADAR)
             gtk_window_maximize(GTK_WINDOW(win->window));
         update_control_button_state(win);
@@ -887,9 +970,11 @@ show_default_windows(DemoApp *app)
         update_control_button_state(win);
     }
 
-    gtk_window_present(GTK_WINDOW(app->windows[WIN_RADAR].window));
+    if (app->windows[WIN_RADAR].visible && !app->windows[WIN_RADAR].minimized)
+        gtk_window_present(GTK_WINDOW(app->windows[WIN_RADAR].window));
+
     for (guint i = 0; i < WIN_COUNT; i++) {
-        if (i != WIN_RADAR)
+        if (i != WIN_RADAR && app->windows[i].visible && !app->windows[i].minimized)
             gtk_window_present(GTK_WINDOW(app->windows[i].window));
     }
 }
@@ -923,6 +1008,7 @@ demo_app_shutdown(GtkApplication *application, gpointer user_data)
         g_source_remove(app->data_tick_id);
 
     save_layout(app);
+    clear_radar_cache(app);
     g_clear_pointer(&app->config_path, g_free);
     g_clear_object(&app->css_provider);
     (void)application;

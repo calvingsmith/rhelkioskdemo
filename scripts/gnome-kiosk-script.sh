@@ -50,6 +50,11 @@ setup_remote_access() {
         fi
     fi
 
+    grdctl_has_vnc=0
+    if grdctl --help 2>/dev/null | grep -qE '^[[:space:]]+vnc[[:space:]]'; then
+        grdctl_has_vnc=1
+    fi
+
     # Avoid login keyring prompts in kiosk mode: by default do not store secrets for RDP.
     if [ "$ENABLE_RDP" = "1" ]; then
         if [ ! -s "$HOME/.local/share/gnome-remote-desktop/tls.key" ] || [ ! -s "$HOME/.local/share/gnome-remote-desktop/tls.crt" ]; then
@@ -63,26 +68,34 @@ setup_remote_access() {
 
         grdctl rdp set-tls-key "$HOME/.local/share/gnome-remote-desktop/tls.key" >>"$REMOTE_LOG" 2>&1
         grdctl rdp set-tls-cert "$HOME/.local/share/gnome-remote-desktop/tls.crt" >>"$REMOTE_LOG" 2>&1
-        grdctl rdp set-auth-methods credentials >>"$REMOTE_LOG" 2>&1
         grdctl rdp set-credentials "$RDP_USERNAME" "$RDP_PASSWORD" >>"$REMOTE_LOG" 2>&1
         grdctl rdp disable-view-only >>"$REMOTE_LOG" 2>&1
         grdctl rdp disable-port-negotiation >>"$REMOTE_LOG" 2>&1
-        grdctl rdp enable >>"$REMOTE_LOG" 2>&1
+        if ! grdctl rdp enable >>"$REMOTE_LOG" 2>&1; then
+            gsettings set org.gnome.desktop.remote-desktop.rdp enable true >>"$REMOTE_LOG" 2>&1 || true
+        fi
     else
         grdctl rdp disable >>"$REMOTE_LOG" 2>&1 || true
+        gsettings set org.gnome.desktop.remote-desktop.rdp enable false >>"$REMOTE_LOG" 2>&1 || true
     fi
 
     if [ "$ENABLE_VNC" = "1" ]; then
-        grdctl vnc set-auth-method "$VNC_AUTH_METHOD" >>"$REMOTE_LOG" 2>&1
-        if [ "$VNC_AUTH_METHOD" = "password" ]; then
-            grdctl vnc set-password "$VNC_PASSWORD" >>"$REMOTE_LOG" 2>&1
+        if [ "$grdctl_has_vnc" = "1" ]; then
+            grdctl vnc set-auth-method "$VNC_AUTH_METHOD" >>"$REMOTE_LOG" 2>&1
+            if [ "$VNC_AUTH_METHOD" = "password" ]; then
+                grdctl vnc set-password "$VNC_PASSWORD" >>"$REMOTE_LOG" 2>&1
+            fi
+            grdctl vnc disable-view-only >>"$REMOTE_LOG" 2>&1
+            grdctl vnc enable-port-negotiation >>"$REMOTE_LOG" 2>&1
+            grdctl vnc enable >>"$REMOTE_LOG" 2>&1
+        else
+            echo "grdctl vnc subcommands unavailable; leaving VNC backend unchanged." >>"$REMOTE_LOG"
         fi
         gsettings set org.gnome.desktop.remote-desktop.vnc encryption "['none']" >>"$REMOTE_LOG" 2>&1
-        grdctl vnc disable-view-only >>"$REMOTE_LOG" 2>&1
-        grdctl vnc enable-port-negotiation >>"$REMOTE_LOG" 2>&1
-        grdctl vnc enable >>"$REMOTE_LOG" 2>&1
     else
-        grdctl vnc disable >>"$REMOTE_LOG" 2>&1 || true
+        if [ "$grdctl_has_vnc" = "1" ]; then
+            grdctl vnc disable >>"$REMOTE_LOG" 2>&1 || true
+        fi
     fi
 
     systemctl --user start gnome-remote-desktop.service >>"$REMOTE_LOG" 2>&1
