@@ -120,6 +120,15 @@ sleep-inactive-battery-timeout=0
 power-button-action='nothing'
 CONF
 
+cat >/etc/dconf/db/local.d/02-kiosk-window-placement <<'CONF'
+[org/gnome/mutter]
+# Mutter centers every new window by default, which stacks all demo
+# child windows exactly on top of each other. Disabling this lets
+# Mutter's deterministic cascade placement spread them out based on
+# map order instead, giving a repeatable default/reset layout.
+center-new-windows=false
+CONF
+
 cat >/etc/dconf/db/local.d/01-kiosk-remote-desktop <<'CONF'
 [org/gnome/desktop/remote-desktop/vnc]
 enable=false

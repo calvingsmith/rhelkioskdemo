@@ -207,6 +207,14 @@ set_window_minimized(DemoWindow *win, gboolean minimized)
     if (win->kind == WIN_RADAR)
         return;
 
+    /* Known open gap (2026-07-09): gtk_window_minimize()/unminimize() work
+     * correctly on Fedora44 (mutter 50.1) but are not honored by RHEL10's
+     * mutter 49.4 under gnome-kiosk. No app-level workaround has proven
+     * reliable there yet (unmapping loses position/stacking; faking
+     * invisibility via opacity did not render correctly on that stack
+     * either). Left as plain, correct GTK4 code pending either a compositor
+     * fix or a deliberate product decision on how to handle it. See
+     * CLAUDE.md "Window minimize" section. */
     if (minimized) {
         gtk_window_minimize(GTK_WINDOW(win->window));
         win->minimized = TRUE;
@@ -909,27 +917,15 @@ on_data_tick(gpointer user_data)
 static void
 persistable_window_size(DemoWindow *win, int *width, int *height)
 {
-    int current_width = gtk_widget_get_width(win->window);
-    int current_height = gtk_widget_get_height(win->window);
-
-    if (current_width > 1 && current_height > 1) {
-        *width = current_width;
-        *height = current_height;
-        return;
-    }
-
-    GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(win->window));
-    if (surface != NULL) {
-        current_width = gdk_surface_get_width(surface);
-        current_height = gdk_surface_get_height(surface);
-    }
-    if (current_width > 1 && current_height > 1) {
-        *width = current_width;
-        *height = current_height;
-        return;
-    }
-
+    /* GTK4 keeps "default-size" in sync with live user/compositor resizes
+     * (except while maximized/fullscreened) and its own docs warn that
+     * reading the widget allocation instead "can lead to growing or
+     * shrinking windows" across save/restore cycles. */
     gtk_window_get_default_size(GTK_WINDOW(win->window), width, height);
+    if (*width <= 0 || *height <= 0) {
+        *width = win->default_width;
+        *height = win->default_height;
+    }
 }
 
 static void
