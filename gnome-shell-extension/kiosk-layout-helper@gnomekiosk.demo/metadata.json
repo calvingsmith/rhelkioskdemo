@@ -1,0 +1,6 @@
+{
+    "uuid": "kiosk-layout-helper@gnomekiosk.demo",
+    "name": "Kiosk Layout Helper",
+    "description": "Exposes real window geometry get/set over D-Bus for the flight-control kiosk demo app's SAVE/LOAD feature.",
+    "shell-version": ["49", "50"]
+}
