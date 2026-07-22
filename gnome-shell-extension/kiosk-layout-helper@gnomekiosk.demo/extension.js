@@ -53,6 +53,18 @@ function findWindowByTitle(title) {
         .find(win => win && win.get_title() === title);
 }
 
+// Radar is meant to be a pure background layer -- never in front of any
+// other app window. lower() is the authoritative Meta.Window action for
+// this (unlike relying on client-side GTK4 present()/stacking order, which
+// this compositor does not reliably honor -- the same class of gap already
+// worked around for minimize/unminimize). Called after anything that could
+// have raised another window, so radar always ends up at the bottom again.
+function lowerRadar() {
+    const radar = findWindowByTitle(RADAR_TITLE);
+    if (radar)
+        radar.lower();
+}
+
 export default class KioskLayoutHelperExtension extends Extension {
     enable() {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(IFACE_XML, this);
@@ -208,11 +220,20 @@ export default class KioskLayoutHelperExtension extends Extension {
             else
                 win.unmaximize(); // unmaximize() takes no arguments on this Mutter version
 
-            if (minimized)
+            if (minimized) {
                 win.minimize();
-            else
+            } else {
                 win.unminimize();
+                // unminimize() alone only clears the minimized state -- it
+                // does not raise/focus the window, so a restored window can
+                // stay stacked behind whatever else is on top (in this app,
+                // the maximized radar window, which covers the whole
+                // screen). activate() both raises and focuses, matching
+                // normal "restore from taskbar" behavior.
+                win.activate(global.get_current_time());
+            }
         }
+        lowerRadar();
     }
 
     // Called by the kiosk app's per-window minimize button, for the live
@@ -223,10 +244,13 @@ export default class KioskLayoutHelperExtension extends Extension {
         if (!win)
             return;
 
-        if (minimized)
+        if (minimized) {
             win.minimize();
-        else
+        } else {
             win.unminimize();
+            win.activate(global.get_current_time());
+            lowerRadar();
+        }
     }
 
     // Called once at startup (and again after RESET/LOAD, which can
@@ -256,6 +280,7 @@ export default class KioskLayoutHelperExtension extends Extension {
                 radar.unmaximize(); // unmaximize() takes no arguments on this Mutter version
             radar.move_resize_frame(true, monitor.x, monitor.y + barHeight,
                 monitor.width, monitor.height - barHeight);
+            radar.lower(); // radar is a pure background layer, never in front
         }
     }
 }

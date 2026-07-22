@@ -314,6 +314,12 @@ show_window(DemoWindow *win)
         gtk_widget_set_visible(win->window, TRUE);
         gtk_window_unminimize(GTK_WINDOW(win->window));
         gtk_window_present(GTK_WINDOW(win->window));
+        /* Plain GTK4 present()/unminimize() above are not reliably honored
+         * by this compositor (the same gap already worked around for the
+         * minimize button); this additionally raises/focuses via the real
+         * Meta.Window path on the gnome-shell build, and re-lowers radar
+         * as a side effect so it never ends up back in front. */
+        backend_set_window_minimized(win, FALSE);
         update_control_button_state(win);
     }
 }
@@ -342,8 +348,12 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
             show_window_by_kind(app, kind);
         }
     } else if (g_strcmp0(target, "all") == 0) {
+        /* Radar is a pure background layer, never explicitly "shown" --
+         * see lowerRadar() in the extension and the button-list skip
+         * above. */
         for (guint i = 0; i < WIN_COUNT; i++)
-            show_window(&app->windows[i]);
+            if (i != WIN_RADAR)
+                show_window(&app->windows[i]);
     } else if (g_strcmp0(target, "save") == 0) {
         save_layout(app);
     } else if (g_strcmp0(target, "reset") == 0) {
@@ -655,7 +665,12 @@ create_window(DemoApp *app, DemoWindow *win, const char *title, int width, int h
     win->window = gtk_application_window_new(app->application);
     gtk_window_set_title(GTK_WINDOW(win->window), title);
     gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
-    gtk_window_set_decorated(GTK_WINDOW(win->window), TRUE);
+    /* Radar is a pure background layer on the gnome-shell build (its own
+     * title/status moved into the standalone menu bar -- see
+     * build_menu_toolbar()), so it gets no window decorations there either.
+     * gnome-kiosk has no separate bar and keeps radar decorated, unchanged. */
+    gtk_window_set_decorated(GTK_WINDOW(win->window),
+        !(win->kind == WIN_RADAR && app->use_separate_menu_bar));
     if (win->kind != WIN_RADAR)
         gtk_window_set_titlebar(GTK_WINDOW(win->window), build_thin_titlebar(win));
     g_signal_connect(win->window, "close-request", G_CALLBACK(on_close_request), win);
@@ -737,8 +752,16 @@ build_menu_toolbar(DemoApp *app)
     gtk_widget_set_halign(layout_label, GTK_ALIGN_END);
 
     for (guint i = 0; i < G_N_ELEMENTS(buttons); i++) {
-        GtkWidget *btn = gtk_button_new_with_label(buttons[i].label);
         DemoWindowKind kind;
+
+        /* On the gnome-shell build, radar is a pure background layer that
+         * is never brought to front (see lowerRadar() in the extension), so
+         * a button to "show" it no longer means anything; gnome-kiosk has
+         * no such concept and keeps this button, unchanged. */
+        if (app->use_separate_menu_bar && g_strcmp0(buttons[i].target, "radar") == 0)
+            continue;
+
+        GtkWidget *btn = gtk_button_new_with_label(buttons[i].label);
         gtk_widget_add_css_class(btn, "motif-button");
         g_object_set_data_full(G_OBJECT(btn), "target", g_strdup(buttons[i].target), g_free);
         g_signal_connect(btn, "clicked", G_CALLBACK(on_menu_button_clicked), app);
@@ -761,6 +784,27 @@ build_menu_toolbar(DemoApp *app)
     gtk_box_append(GTK_BOX(button_row), window_buttons);
     gtk_box_append(GTK_BOX(button_row), spacer);
     gtk_box_append(GTK_BOX(button_row), layout_section);
+
+    /* On the gnome-shell build, radar's own title and live status text move
+     * here (radar itself becomes pure background canvas -- see
+     * build_radar_window_content()), sitting to the right of the layout
+     * buttons so they stay visible regardless of what's on top of radar. */
+    if (app->use_separate_menu_bar) {
+        GtkWidget *radar_info = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        GtkWidget *radar_title = gtk_label_new(app->windows[WIN_RADAR].title);
+        GtkWidget *radar_status = gtk_label_new("Booting...");
+
+        gtk_widget_add_css_class(radar_title, "motif-panel-title");
+        gtk_widget_add_css_class(radar_status, "motif-status-body");
+        gtk_widget_set_halign(radar_title, GTK_ALIGN_END);
+        gtk_widget_set_halign(radar_status, GTK_ALIGN_END);
+        gtk_widget_set_margin_start(radar_info, 12);
+        gtk_box_append(GTK_BOX(radar_info), radar_title);
+        gtk_box_append(GTK_BOX(radar_info), radar_status);
+        gtk_box_append(GTK_BOX(button_row), radar_info);
+
+        app->windows[WIN_RADAR].status_label = radar_status;
+    }
 
     gtk_box_append(GTK_BOX(outer), header);
     gtk_box_append(GTK_BOX(outer), button_row);
@@ -803,15 +847,9 @@ static GtkWidget *
 build_radar_window_content(DemoApp *app)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-    GtkWidget *status = gtk_label_new("Booting...");
-    GtkWidget *radar_header = build_window_header("EXTERNAL INTERFACES");
     GtkWidget *drawing = gtk_drawing_area_new();
 
     gtk_widget_add_css_class(outer, "motif-panel");
-    gtk_label_set_wrap(GTK_LABEL(status), TRUE);
-    gtk_widget_set_hexpand(status, TRUE);
-    gtk_widget_set_halign(status, GTK_ALIGN_FILL);
-    gtk_widget_add_css_class(status, "motif-status-body");
 
     if (!app->use_separate_menu_bar)
         gtk_box_append(GTK_BOX(outer), build_menu_toolbar(app));
@@ -820,13 +858,27 @@ build_radar_window_content(DemoApp *app)
     gtk_widget_set_hexpand(drawing, TRUE);
     gtk_widget_set_vexpand(drawing, TRUE);
 
-    gtk_box_append(GTK_BOX(outer), status);
-    gtk_box_append(GTK_BOX(outer), radar_header);
+    /* On the gnome-shell build, radar is purely the background surface --
+     * its own title/status text moves into the standalone menu bar window
+     * instead (see build_menu_toolbar()), so nothing is drawn twice and
+     * app->windows[WIN_RADAR].status_label is assigned there instead.
+     * gnome-kiosk has no separate bar, so radar keeps its own header and
+     * status label here, unchanged from before the menu-bar split. */
+    if (!app->use_separate_menu_bar) {
+        GtkWidget *status = gtk_label_new("Booting...");
+        gtk_label_set_wrap(GTK_LABEL(status), TRUE);
+        gtk_widget_set_hexpand(status, TRUE);
+        gtk_widget_set_halign(status, GTK_ALIGN_FILL);
+        gtk_widget_add_css_class(status, "motif-status-body");
+        gtk_box_append(GTK_BOX(outer), status);
+        gtk_box_append(GTK_BOX(outer), build_window_header("EXTERNAL INTERFACES"));
+        app->windows[WIN_RADAR].status_label = status;
+    }
+
     gtk_widget_add_css_class(drawing, "radar-surface");
     gtk_box_append(GTK_BOX(outer), drawing);
 
     app->windows[WIN_RADAR].radar_area = drawing;
-    app->windows[WIN_RADAR].status_label = status;
     return outer;
 }
 
