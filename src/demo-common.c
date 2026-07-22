@@ -1,62 +1,6 @@
-#include <gtk/gtk.h>
-#include <gio/gio.h>
+#include "demo-common.h"
 #include <math.h>
 #include <string.h>
-
-#define APP_ID "com.demo.GnomeKioskDemo"
-#define CONFIG_DIR_NAME "gnome-kiosk-demo"
-#define CONFIG_FILE_NAME "layout.ini"
-
-typedef enum {
-    WIN_RADAR = 0,
-    WIN_TRAFFIC,
-    WIN_CLEARANCE,
-    WIN_GROUND,
-    WIN_STATUS,
-    WIN_COUNT
-} DemoWindowKind;
-
-typedef struct {
-    DemoWindowKind kind;
-    const char *id;
-    const char *title;
-    const char *role;
-    const char *button_label;
-    int default_width;
-    int default_height;
-    GtkWidget *window;
-    GtkWidget *status_label;
-    GtkWidget *text_view;
-    GtkTextBuffer *buffer;
-    GtkWidget *radar_area;
-    GtkWidget *control_button;
-    gboolean visible;
-    gboolean minimized;
-} DemoWindow;
-
-typedef struct {
-    gchar callsign[16];
-    double x;
-    double y;
-    double heading;
-    double speed;
-} RadarContact;
-
-typedef struct {
-    GtkApplication *application;
-    GtkCssProvider *css_provider;
-    gchar *config_path;
-    guint radar_tick_id;
-    guint data_tick_id;
-    guint generation;
-    guint radar_frame;
-    double sweep_angle;
-    cairo_surface_t *radar_static_surface;
-    int radar_cache_width;
-    int radar_cache_height;
-    RadarContact contacts[8];
-    DemoWindow windows[WIN_COUNT];
-} DemoApp;
 
 static const char *CALLSIGNS[] = {
     "CIRRUS", "NORTHSTAR", "SKYLANE", "VECTOR", "HORIZON",
@@ -88,19 +32,16 @@ static const struct {
 };
 
 static GtkWidget *build_radar_window_content(DemoApp *app);
+static GtkWidget *build_menu_toolbar(DemoApp *app);
+static void build_menu_bar_window(DemoApp *app);
+static void refresh_menu_bar_chrome(DemoApp *app);
+static gboolean initial_menu_bar_chrome_cb(gpointer user_data);
 static void show_default_windows(DemoApp *app);
 static void apply_factory_layout(DemoApp *app);
 static gchar *generate_callsign(void);
-static gboolean apply_saved_layout(DemoApp *app);
-static void save_layout(DemoApp *app);
 static GtkWidget *build_window_header(const char *title);
 static GtkWidget *build_thin_titlebar(DemoWindow *win);
 static void clear_radar_cache(DemoApp *app);
-static void persistable_window_size(DemoWindow *win, int *width, int *height);
-static void apply_window_size(DemoWindow *win, int width, int height);
-#ifdef WITH_LAYOUT_HELPER
-static void check_layout_helper_available(void);
-#endif
 
 static double
 normalize_heading(double heading)
@@ -184,7 +125,7 @@ target_to_kind(const char *target, DemoWindowKind *kind)
     return TRUE;
 }
 
-static void
+void
 update_control_button_state(DemoWindow *win)
 {
     if (win->control_button == NULL || win->button_label == NULL)
@@ -218,7 +159,8 @@ set_window_minimized(DemoWindow *win, gboolean minimized)
      * invisibility via opacity did not render correctly on that stack
      * either). Left as plain, correct GTK4 code pending either a compositor
      * fix or a deliberate product decision on how to handle it. See
-     * CLAUDE.md "Window minimize" section. */
+     * CLAUDE.md "Window minimize" section. The gnome-shell build's
+     * layout-helper extension solves this reliably; see gnome-shell.c. */
     if (minimized) {
         gtk_window_minimize(GTK_WINDOW(win->window));
         win->minimized = TRUE;
@@ -411,11 +353,15 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
         apply_factory_layout(app);
         show_default_windows(app);
         update_text_windows(app);
+        if (app->use_separate_menu_bar)
+            g_timeout_add(200, initial_menu_bar_chrome_cb, app);
     } else if (g_strcmp0(target, "load") == 0) {
         if (!apply_saved_layout(app))
             apply_factory_layout(app);
         show_default_windows(app);
         update_text_windows(app);
+        if (app->use_separate_menu_bar)
+            g_timeout_add(200, initial_menu_bar_chrome_cb, app);
     }
 }
 
@@ -745,10 +691,17 @@ build_windows(DemoApp *app)
     gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_GROUND].window), TRUE);
     gtk_window_set_resizable(GTK_WINDOW(app->windows[WIN_STATUS].window), TRUE);
 
+    if (app->use_separate_menu_bar)
+        build_menu_bar_window(app);
 }
 
+/* The "M & C GLOBAL MENU" toolbar: window buttons (TRF/CLR/GRD/STS/RAD/ALL)
+ * plus the SAVE/LOAD/RESET layout actions. Embedded at the top of the
+ * radar window normally; built as the sole content of its own standalone
+ * window when app->use_separate_menu_bar is set (see build_menu_bar_window
+ * and configure_menu_bar_window). */
 static GtkWidget *
-build_radar_window_content(DemoApp *app)
+build_menu_toolbar(DemoApp *app)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *header = build_window_header("M & C GLOBAL MENU");
@@ -758,9 +711,6 @@ build_radar_window_content(DemoApp *app)
     GtkWidget *layout_section = gtk_box_new(GTK_ORIENTATION_VERTICAL, 1);
     GtkWidget *layout_label = gtk_label_new("Layout");
     GtkWidget *layout_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-    GtkWidget *status = gtk_label_new("Booting...");
-    GtkWidget *radar_header = build_window_header("EXTERNAL INTERFACES");
-    GtkWidget *drawing = gtk_drawing_area_new();
     const struct {
         const char *label;
         const char *target;
@@ -784,10 +734,6 @@ build_radar_window_content(DemoApp *app)
     gtk_widget_add_css_class(outer, "motif-panel");
     gtk_widget_add_css_class(button_row, "motif-toolbar");
     gtk_widget_add_css_class(layout_label, "motif-layout-label");
-    gtk_label_set_wrap(GTK_LABEL(status), TRUE);
-    gtk_widget_set_hexpand(status, TRUE);
-    gtk_widget_set_halign(status, GTK_ALIGN_FILL);
-    gtk_widget_add_css_class(status, "motif-status-body");
     gtk_widget_set_hexpand(spacer, TRUE);
     gtk_widget_set_halign(layout_section, GTK_ALIGN_END);
     gtk_widget_set_halign(layout_label, GTK_ALIGN_END);
@@ -818,12 +764,64 @@ build_radar_window_content(DemoApp *app)
     gtk_box_append(GTK_BOX(button_row), spacer);
     gtk_box_append(GTK_BOX(button_row), layout_section);
 
+    gtk_box_append(GTK_BOX(outer), header);
+    gtk_box_append(GTK_BOX(outer), button_row);
+
+    return outer;
+}
+
+/* Standalone, undecorated toplevel holding just the menu toolbar. Its
+ * title (MENU_BAR_TITLE) is how the gnome-shell extension finds it to
+ * pin as an unmovable always-on-top bar; see configure_menu_bar_window(). */
+static void
+build_menu_bar_window(DemoApp *app)
+{
+    app->menu_bar_window = gtk_application_window_new(app->application);
+    gtk_window_set_title(GTK_WINDOW(app->menu_bar_window), MENU_BAR_TITLE);
+    gtk_window_set_decorated(GTK_WINDOW(app->menu_bar_window), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(app->menu_bar_window), FALSE);
+    gtk_window_set_child(GTK_WINDOW(app->menu_bar_window), build_menu_toolbar(app));
+}
+
+/* Re-asserts the menu bar's pinned position and the radar window's
+ * below-the-bar geometry. Only does anything when use_separate_menu_bar is
+ * set; called once at startup and again after RESET/LOAD, since both can
+ * re-maximize the radar window over the bar via apply_factory_layout(). */
+static void
+refresh_menu_bar_chrome(DemoApp *app)
+{
+    if (app->use_separate_menu_bar)
+        configure_menu_bar_window(app);
+}
+
+static gboolean
+initial_menu_bar_chrome_cb(gpointer user_data)
+{
+    refresh_menu_bar_chrome(user_data);
+    return G_SOURCE_REMOVE;
+}
+
+static GtkWidget *
+build_radar_window_content(DemoApp *app)
+{
+    GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    GtkWidget *status = gtk_label_new("Booting...");
+    GtkWidget *radar_header = build_window_header("EXTERNAL INTERFACES");
+    GtkWidget *drawing = gtk_drawing_area_new();
+
+    gtk_widget_add_css_class(outer, "motif-panel");
+    gtk_label_set_wrap(GTK_LABEL(status), TRUE);
+    gtk_widget_set_hexpand(status, TRUE);
+    gtk_widget_set_halign(status, GTK_ALIGN_FILL);
+    gtk_widget_add_css_class(status, "motif-status-body");
+
+    if (!app->use_separate_menu_bar)
+        gtk_box_append(GTK_BOX(outer), build_menu_toolbar(app));
+
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_radar, app, NULL);
     gtk_widget_set_hexpand(drawing, TRUE);
     gtk_widget_set_vexpand(drawing, TRUE);
 
-    gtk_box_append(GTK_BOX(outer), header);
-    gtk_box_append(GTK_BOX(outer), button_row);
     gtk_box_append(GTK_BOX(outer), status);
     gtk_box_append(GTK_BOX(outer), radar_header);
     gtk_widget_add_css_class(drawing, "radar-surface");
@@ -833,246 +831,6 @@ build_radar_window_content(DemoApp *app)
     app->windows[WIN_RADAR].status_label = status;
     return outer;
 }
-
-#ifdef WITH_LAYOUT_HELPER
-/* Everything in this block only exists in the gnome-shell build
- * (`make shell`, binary "gnomekiosk-demo-shell"). The plain `make`
- * build (binary "gnomekiosk-demo", what gnome-kiosk runs) compiles
- * apply_saved_layout()/save_layout() from the #else branch below,
- * unchanged from the pre-existing gnome-kiosk-only implementation,
- * with zero D-Bus/GDBusProxy code present in that binary at all. */
-
-/* Backed by the optional "Kiosk Layout Helper" GNOME Shell extension
- * (gnome-shell-extension/kiosk-layout-helper@gnomekiosk.demo), which alone
- * can give exact window position and reliable minimize/maximize, since
- * those require in-process Meta.Window access that plain GTK4/Wayland
- * client code cannot get (see CLAUDE.md "Window minimize" /
- * "Layout persistence behavior"). */
-static GDBusProxy *
-get_layout_helper_proxy(void)
-{
-    static GDBusProxy *proxy = NULL;
-    static gboolean tried = FALSE;
-
-    if (!tried) {
-        tried = TRUE;
-        g_autoptr(GError) error = NULL;
-        proxy = g_dbus_proxy_new_for_bus_sync(
-            G_BUS_TYPE_SESSION, G_DBUS_PROXY_FLAGS_NONE, NULL,
-            "org.gnome.Shell", "/org/gnomekiosk/LayoutHelper",
-            "org.gnomekiosk.LayoutHelper", NULL, &error);
-        if (proxy == NULL)
-            g_debug("layout helper unavailable: %s", error->message);
-    }
-    return proxy;
-}
-
-/* Startup diagnostic: log clearly, once, whether the "Kiosk Layout Helper"
- * extension is actually installed/enabled/reachable, rather than only
- * discovering this indirectly the first time SAVE/LOAD quietly no-ops. */
-static void
-check_layout_helper_available(void)
-{
-    GDBusProxy *proxy = get_layout_helper_proxy();
-    if (proxy == NULL) {
-        g_warning("Kiosk Layout Helper extension not reachable on the session bus "
-                  "(org.gnome.Shell / /org/gnomekiosk/LayoutHelper) — "
-                  "exact window position/state will not be available this run.");
-        return;
-    }
-
-    g_autoptr(GError) error = NULL;
-    g_autoptr(GVariant) result = g_dbus_proxy_call_sync(
-        proxy, "Ping", NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
-    if (result == NULL) {
-        g_warning("Kiosk Layout Helper extension did not respond to Ping: %s — "
-                  "is it installed and enabled? (gnome-extensions list --enabled)",
-                  error->message);
-        return;
-    }
-
-    const char *version = NULL;
-    g_variant_get(result, "(&s)", &version);
-    g_message("Kiosk Layout Helper extension found: %s", version);
-}
-
-static gboolean
-apply_saved_layout(DemoApp *app)
-{
-    g_autoptr(GKeyFile) keyfile = g_key_file_new();
-    if (!g_key_file_load_from_file(keyfile, app->config_path, G_KEY_FILE_NONE, NULL))
-        return FALSE;
-
-    GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("a(siiiibb)"));
-    gboolean have_positions = FALSE;
-
-    for (guint i = 0; i < WIN_COUNT; i++) {
-        DemoWindow *win = &app->windows[i];
-        win->visible = TRUE;
-        win->minimized = FALSE;
-        if (g_key_file_has_key(keyfile, win->id, "width", NULL)) {
-            int width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
-            int height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
-            apply_window_size(win, width, height);
-        }
-        if (g_key_file_has_key(keyfile, win->id, "visible", NULL))
-            win->visible = g_key_file_get_boolean(keyfile, win->id, "visible", NULL);
-        gboolean maximized = FALSE;
-        if (g_key_file_has_key(keyfile, win->id, "maximized", NULL)) {
-            maximized = g_key_file_get_boolean(keyfile, win->id, "maximized", NULL);
-            if (maximized)
-                gtk_window_maximize(GTK_WINDOW(win->window));
-            else
-                gtk_window_unmaximize(GTK_WINDOW(win->window));
-        }
-        if (g_key_file_has_key(keyfile, win->id, "minimized", NULL))
-            win->minimized = g_key_file_get_boolean(keyfile, win->id, "minimized", NULL);
-
-        /* Exact position/reliable minimize: only the layout-helper Shell
-         * extension can honor these (see get_layout_helper_proxy()); the
-         * GTK-only calls above are the fallback when it's not running. */
-        if (win->kind != WIN_RADAR &&
-            g_key_file_has_key(keyfile, win->id, "x", NULL) &&
-            g_key_file_has_key(keyfile, win->id, "y", NULL)) {
-            int x = g_key_file_get_integer(keyfile, win->id, "x", NULL);
-            int y = g_key_file_get_integer(keyfile, win->id, "y", NULL);
-            int width = 0, height = 0;
-            gtk_window_get_default_size(GTK_WINDOW(win->window), &width, &height);
-            g_variant_builder_add(&builder, "(siiiibb)",
-                win->title, x, y, width, height, win->minimized, maximized);
-            have_positions = TRUE;
-        }
-
-        update_control_button_state(win);
-    }
-
-    if (have_positions) {
-        GDBusProxy *helper = get_layout_helper_proxy();
-        if (helper != NULL) {
-            g_autoptr(GError) error = NULL;
-            g_autoptr(GVariant) result = g_dbus_proxy_call_sync(
-                helper, "SetStates", g_variant_new("(a(siiiibb))", &builder),
-                G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
-            if (result == NULL)
-                g_debug("SetStates failed: %s", error->message);
-        } else {
-            g_variant_builder_clear(&builder);
-        }
-    } else {
-        g_variant_builder_clear(&builder);
-    }
-
-    return TRUE;
-}
-
-static void
-save_layout(DemoApp *app)
-{
-    g_autoptr(GKeyFile) keyfile = g_key_file_new();
-
-    g_autoptr(GVariant) states = NULL;
-    GDBusProxy *helper = get_layout_helper_proxy();
-    if (helper != NULL) {
-        g_autoptr(GError) error = NULL;
-        g_autoptr(GVariant) result = g_dbus_proxy_call_sync(
-            helper, "GetStates", NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
-        if (result != NULL)
-            states = g_variant_get_child_value(result, 0);
-        else
-            g_debug("GetStates failed: %s", error->message);
-    }
-
-    for (guint i = 0; i < WIN_COUNT; i++) {
-        DemoWindow *win = &app->windows[i];
-        int width = 0;
-        int height = 0;
-        persistable_window_size(win, &width, &height);
-        g_key_file_set_integer(keyfile, win->id, "width", width);
-        g_key_file_set_integer(keyfile, win->id, "height", height);
-        g_key_file_set_boolean(keyfile, win->id, "visible", win->visible);
-        g_key_file_set_boolean(keyfile, win->id, "maximized", gtk_window_is_maximized(GTK_WINDOW(win->window)));
-        g_key_file_set_boolean(keyfile, win->id, "minimized", win->minimized);
-
-        if (states != NULL && win->kind != WIN_RADAR) {
-            GVariantIter iter;
-            const char *title;
-            gint32 x, y, w, h;
-            gboolean min, max;
-            g_variant_iter_init(&iter, states);
-            while (g_variant_iter_next(&iter, "(siiiibb)", &title, &x, &y, &w, &h, &min, &max)) {
-                if (g_strcmp0(title, win->title) == 0) {
-                    g_key_file_set_integer(keyfile, win->id, "x", x);
-                    g_key_file_set_integer(keyfile, win->id, "y", y);
-                    break;
-                }
-            }
-        }
-    }
-
-    gsize len = 0;
-    g_autofree gchar *data = g_key_file_to_data(keyfile, &len, NULL);
-    g_file_set_contents(app->config_path, data, len, NULL);
-}
-
-#else /* !WITH_LAYOUT_HELPER: plain gnome-kiosk build, unchanged */
-
-static gboolean
-apply_saved_layout(DemoApp *app)
-{
-    g_autoptr(GKeyFile) keyfile = g_key_file_new();
-    if (!g_key_file_load_from_file(keyfile, app->config_path, G_KEY_FILE_NONE, NULL))
-        return FALSE;
-
-    for (guint i = 0; i < WIN_COUNT; i++) {
-        DemoWindow *win = &app->windows[i];
-        win->visible = TRUE;
-        win->minimized = FALSE;
-        if (g_key_file_has_key(keyfile, win->id, "width", NULL)) {
-            int width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
-            int height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
-            apply_window_size(win, width, height);
-        }
-        if (g_key_file_has_key(keyfile, win->id, "visible", NULL))
-            win->visible = g_key_file_get_boolean(keyfile, win->id, "visible", NULL);
-        if (g_key_file_has_key(keyfile, win->id, "maximized", NULL)) {
-            gboolean maximized = g_key_file_get_boolean(keyfile, win->id, "maximized", NULL);
-            if (maximized)
-                gtk_window_maximize(GTK_WINDOW(win->window));
-            else
-                gtk_window_unmaximize(GTK_WINDOW(win->window));
-        }
-        if (g_key_file_has_key(keyfile, win->id, "minimized", NULL))
-            win->minimized = g_key_file_get_boolean(keyfile, win->id, "minimized", NULL);
-
-        update_control_button_state(win);
-    }
-    return TRUE;
-}
-
-static void
-save_layout(DemoApp *app)
-{
-    g_autoptr(GKeyFile) keyfile = g_key_file_new();
-
-    for (guint i = 0; i < WIN_COUNT; i++) {
-        DemoWindow *win = &app->windows[i];
-        int width = 0;
-        int height = 0;
-        persistable_window_size(win, &width, &height);
-        g_key_file_set_integer(keyfile, win->id, "width", width);
-        g_key_file_set_integer(keyfile, win->id, "height", height);
-        g_key_file_set_boolean(keyfile, win->id, "visible", win->visible);
-        g_key_file_set_boolean(keyfile, win->id, "maximized", gtk_window_is_maximized(GTK_WINDOW(win->window)));
-        g_key_file_set_boolean(keyfile, win->id, "minimized", win->minimized);
-    }
-
-    gsize len = 0;
-    g_autofree gchar *data = g_key_file_to_data(keyfile, &len, NULL);
-    g_file_set_contents(app->config_path, data, len, NULL);
-}
-
-#endif /* WITH_LAYOUT_HELPER */
 
 static gboolean
 on_radar_tick(gpointer user_data)
@@ -1103,7 +861,7 @@ on_data_tick(gpointer user_data)
     return G_SOURCE_CONTINUE;
 }
 
-static void
+void
 persistable_window_size(DemoWindow *win, int *width, int *height)
 {
     /* GTK4 keeps "default-size" in sync with live user/compositor resizes
@@ -1117,7 +875,7 @@ persistable_window_size(DemoWindow *win, int *width, int *height)
     }
 }
 
-static void
+void
 apply_window_size(DemoWindow *win, int width, int height)
 {
     gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
@@ -1164,7 +922,7 @@ show_default_windows(DemoApp *app)
     }
 }
 
-static void
+void
 demo_app_activate(GtkApplication *application, gpointer user_data)
 {
     DemoApp *app = user_data;
@@ -1179,11 +937,24 @@ demo_app_activate(GtkApplication *application, gpointer user_data)
     update_text_windows(app);
     show_default_windows(app);
 
+    if (app->use_separate_menu_bar) {
+        gtk_widget_set_visible(app->menu_bar_window, TRUE);
+        gtk_window_present(GTK_WINDOW(app->menu_bar_window));
+
+        /* gtk_window_present() queues a map; it does not guarantee Mutter
+         * has processed the resulting Wayland surface commit and created
+         * the corresponding Meta.Window within this same call stack. A
+         * ConfigureKioskChrome call issued synchronously here can (and in
+         * testing, does) race ahead of that and silently find no window
+         * to pin/resize. Defer to let the map complete first. */
+        g_timeout_add(200, initial_menu_bar_chrome_cb, app);
+    }
+
     app->radar_tick_id = g_timeout_add(1000, on_radar_tick, app);
     app->data_tick_id = g_timeout_add_seconds(4, on_data_tick, app);
 }
 
-static void
+void
 demo_app_shutdown(GtkApplication *application, gpointer user_data)
 {
     DemoApp *app = user_data;
@@ -1197,20 +968,4 @@ demo_app_shutdown(GtkApplication *application, gpointer user_data)
     g_clear_pointer(&app->config_path, g_free);
     g_clear_object(&app->css_provider);
     (void)application;
-}
-
-int
-main(int argc, char **argv)
-{
-#ifdef WITH_LAYOUT_HELPER
-    check_layout_helper_available();
-#endif
-
-    g_autoptr(GtkApplication) application = gtk_application_new(APP_ID, G_APPLICATION_DEFAULT_FLAGS);
-    DemoApp app = {0};
-
-    g_signal_connect(application, "activate", G_CALLBACK(demo_app_activate), &app);
-    g_signal_connect(application, "shutdown", G_CALLBACK(demo_app_shutdown), &app);
-
-    return g_application_run(G_APPLICATION(application), argc, argv);
 }
