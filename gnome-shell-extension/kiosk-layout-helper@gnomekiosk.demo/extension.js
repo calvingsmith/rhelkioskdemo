@@ -215,6 +215,20 @@ export default class KioskLayoutHelperExtension extends Extension {
         }
     }
 
+    // Called by the kiosk app's per-window minimize button, for the live
+    // toggle (as opposed to SetStates' bulk LOAD/RESET). Only touches
+    // minimize state via real Meta.Window primitives, not position/size.
+    SetWindowMinimized(title, minimized) {
+        const win = findWindowByTitle(title);
+        if (!win)
+            return;
+
+        if (minimized)
+            win.minimize();
+        else
+            win.unminimize();
+    }
+
     // Called once at startup (and again after RESET/LOAD, which can
     // re-maximize the radar window) to pin the standalone menu bar as an
     // unmovable always-on-top DOCK, and resize the radar window to fill
