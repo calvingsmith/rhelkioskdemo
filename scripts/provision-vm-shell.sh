@@ -52,6 +52,13 @@ fi
 
 SSH_OPTS=(-i "$SSH_KEY" -o StrictHostKeyChecking=accept-new)
 
+# `scp -r` into a destination that already exists nests the source directory
+# one level deeper instead of replacing its contents (classic cp/scp -r
+# gotcha) — on a second+ run this silently left the OLD extension.js in
+# place at the path GNOME actually loads, while the new one sat unused in
+# a nested subdirectory. Remove the remote staging dir first so every run
+# gets a clean, flat copy.
+ssh "${SSH_OPTS[@]}" "$REMOTE_USER@$HOST" "rm -rf /tmp/$EXTENSION_UUID"
 scp "${SSH_OPTS[@]}" "$APP_BIN" "$REMOTE_USER@$HOST:/tmp/$APP_NAME"
 scp "${SSH_OPTS[@]}" -r "$EXTENSION_DIR" "$REMOTE_USER@$HOST:/tmp/$EXTENSION_UUID"
 

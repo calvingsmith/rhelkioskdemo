@@ -1,0 +1,11 @@
+[Unit]
+Description=Kiosk demo remote-access setup (TLS/credentials/keyring, then start RDP)
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gnomekiosk-remote-access-setup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical-session.target

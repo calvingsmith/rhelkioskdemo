@@ -25,7 +25,7 @@ get_layout_helper_proxy(void)
             "org.gnome.Shell", "/org/gnomekiosk/LayoutHelper",
             "org.gnomekiosk.LayoutHelper", NULL, &error);
         if (proxy == NULL)
-            g_debug("layout helper unavailable: %s", error->message);
+            g_message("layout helper unavailable: %s", error->message);
     }
     return proxy;
 }
@@ -50,7 +50,9 @@ configure_menu_bar_window(DemoApp *app)
         helper, "ConfigureKioskChrome", g_variant_new("(i)", MENU_BAR_HEIGHT),
         G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
     if (result == NULL)
-        g_debug("ConfigureKioskChrome failed: %s", error->message);
+        g_message("ConfigureKioskChrome failed: %s", error->message);
+    else
+        g_message("ConfigureKioskChrome applied (barHeight=%d)", MENU_BAR_HEIGHT);
 }
 
 /* Startup diagnostic: log clearly, once, whether the "Kiosk Layout Helper"
@@ -80,6 +82,30 @@ check_layout_helper_available(void)
     const char *version = NULL;
     g_variant_get(result, "(&s)", &version);
     g_message("Kiosk Layout Helper extension found: %s", version);
+}
+
+/* Live per-click minimize/restore toggle, routed through the extension's
+ * real Meta.Window.minimize()/unminimize() instead of GTK4's client-side
+ * request (which RHEL10's mutter 49.4 silently ignores -- see CLAUDE.md
+ * "Window minimize"). This was the actual point of the gnome-shell
+ * migration for minimize reliability; apply_saved_layout()'s SetStates call
+ * only ever covered bulk LOAD/RESET, not this live toggle. */
+void
+backend_set_window_minimized(DemoWindow *win, gboolean minimized)
+{
+    if (win->kind == WIN_RADAR)
+        return;
+
+    GDBusProxy *helper = get_layout_helper_proxy();
+    if (helper == NULL)
+        return;
+
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) result = g_dbus_proxy_call_sync(
+        helper, "SetWindowMinimized", g_variant_new("(sb)", win->title, minimized),
+        G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+    if (result == NULL)
+        g_message("SetWindowMinimized failed: %s", error->message);
 }
 
 gboolean
@@ -141,7 +167,7 @@ apply_saved_layout(DemoApp *app)
                 helper, "SetStates", g_variant_new("(a(siiiibb))", &builder),
                 G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
             if (result == NULL)
-                g_debug("SetStates failed: %s", error->message);
+                g_message("SetStates failed: %s", error->message);
         } else {
             g_variant_builder_clear(&builder);
         }
@@ -166,7 +192,7 @@ save_layout(DemoApp *app)
         if (result != NULL)
             states = g_variant_get_child_value(result, 0);
         else
-            g_debug("GetStates failed: %s", error->message);
+            g_message("GetStates failed: %s", error->message);
     }
 
     for (guint i = 0; i < WIN_COUNT; i++) {

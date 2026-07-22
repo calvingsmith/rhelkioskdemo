@@ -97,6 +97,14 @@ void update_control_button_state(DemoWindow *win);
 gboolean apply_saved_layout(DemoApp *app);
 void save_layout(DemoApp *app);
 
+/* Live per-click minimize/restore toggle (as opposed to bulk LOAD/RESET,
+ * handled by apply_saved_layout above). gnome-kiosk.c keeps the plain GTK4
+ * gtk_window_minimize()/unminimize() calls, which do not always work (see
+ * CLAUDE.md "Window minimize"); gnome-shell.c routes this through the Kiosk
+ * Layout Helper extension's real Meta.Window.minimize()/unminimize(),
+ * which is reliable regardless of compositor version. */
+void backend_set_window_minimized(DemoWindow *win, gboolean minimized);
+
 /* Pins/repositions the standalone menu bar + resizes the radar window to
  * make room for it. Only meaningful (and only called) when
  * app->use_separate_menu_bar is TRUE; gnome-kiosk.c provides a no-op

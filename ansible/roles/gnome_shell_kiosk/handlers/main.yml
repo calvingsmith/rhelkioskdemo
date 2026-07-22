@@ -1,0 +1,4 @@
+---
+- name: dconf update
+  ansible.builtin.command: dconf update
+  become: true

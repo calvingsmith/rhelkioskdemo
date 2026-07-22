@@ -152,21 +152,19 @@ set_window_minimized(DemoWindow *win, gboolean minimized)
     if (win->kind == WIN_RADAR)
         return;
 
-    /* Known open gap (2026-07-09): gtk_window_minimize()/unminimize() work
-     * correctly on Fedora44 (mutter 50.1) but are not honored by RHEL10's
-     * mutter 49.4 under gnome-kiosk. No app-level workaround has proven
-     * reliable there yet (unmapping loses position/stacking; faking
-     * invisibility via opacity did not render correctly on that stack
-     * either). Left as plain, correct GTK4 code pending either a compositor
-     * fix or a deliberate product decision on how to handle it. See
-     * CLAUDE.md "Window minimize" section. The gnome-shell build's
-     * layout-helper extension solves this reliably; see gnome-shell.c. */
+    /* Known open gap (2026-07-09): plain GTK4 gtk_window_minimize()/
+     * unminimize() work correctly on Fedora44 (mutter 50.1) but are not
+     * honored by RHEL10's mutter 49.4 under gnome-kiosk. backend_set_
+     * window_minimized() is the per-build fix: gnome-kiosk.c keeps the
+     * plain GTK4 calls (unchanged behavior there), gnome-shell.c routes
+     * this through the Kiosk Layout Helper extension's real Meta.Window
+     * primitives instead, which are reliable regardless of compositor
+     * version. See CLAUDE.md "Window minimize" section. */
+    backend_set_window_minimized(win, minimized);
     if (minimized) {
-        gtk_window_minimize(GTK_WINDOW(win->window));
         win->minimized = TRUE;
         win->visible = TRUE;
     } else {
-        gtk_window_unminimize(GTK_WINDOW(win->window));
         gtk_widget_set_visible(win->window, TRUE);
         gtk_window_present(GTK_WINDOW(win->window));
         win->minimized = FALSE;

@@ -72,6 +72,19 @@ configure_menu_bar_window(DemoApp *app)
     (void) app;
 }
 
+/* Plain GTK4 requests, unchanged from before the backend split. Known to be
+ * silently ignored by RHEL10's mutter 49.4 (see CLAUDE.md "Window
+ * minimize"); the gnome-shell build's implementation in gnome-shell.c uses
+ * real Meta.Window access instead to work around that. */
+void
+backend_set_window_minimized(DemoWindow *win, gboolean minimized)
+{
+    if (minimized)
+        gtk_window_minimize(GTK_WINDOW(win->window));
+    else
+        gtk_window_unminimize(GTK_WINDOW(win->window));
+}
+
 int
 main(int argc, char **argv)
 {
