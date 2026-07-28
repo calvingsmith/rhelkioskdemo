@@ -5,6 +5,8 @@
 **Prepared for:** internal review
 **Status:** Options analysis — no direction chosen. Platform is fixed at RHEL10; everything above that (display server, window manager, toolkit, remote-access model) is open.
 
+> **Requirement dropped (2026-07-27):** the dual-operator/multi-pointer/input-attribution requirement this document's Axis B (§4–§6) analyzes is **no longer required** — single-operator is the active target. This document is kept in full as historical record (the reasoning may be reusable if a similar requirement returns), but no further engineering work should be scoped against Axis B, the combined candidates that depend on it (Candidates 1, 2, 4, 6), or the open items in §7 that reference it. Axis A (Motif fidelity, §3) is unaffected and remains live.
+
 ## In short
 
 The current implementation direction — GTK4, Wayland, `gnome-kiosk`, optionally RDP for remote access — was chosen incrementally, one problem at a time. Several of those problems turned out to be platform limits, not bugs: Wayland won't give an app a toplevel's absolute position, RHEL10's Mutter silently no-ops `xdg_toplevel.set_minimized`, and GNOME's RDP backend merges every remote operator into one indistinguishable input seat (see [rdp-input-attribution.md](rdp-input-attribution.md)). An earlier draft of this document framed all three as "Wayland/Mutter limitations that don't exist on plain X11," and proposed dropping Wayland for real `mwm` + Multi-Pointer X as the clean fix. **That escape hatch does not exist on a supported RHEL 10.1 install, and it's worth being precise about why, since it rules out an entire branch of this analysis rather than just one option:**

@@ -78,6 +78,8 @@ The application implements a traditional MDI application which can show/operate 
 
 When the application runs, it will be through RDP. Each RDP session will show the SAME live session (part of the challenge here is making sure the application can handle this) but the application must be able to determin which session is interacting with the windows - some windows will have content only a particular user (rdp session) can use/modify.
 
+> **Requirement dropped (2026-07-27):** the multi-operator/multi-pointer requirement above (per-session input attribution, per-window locking to a specific operator) is **no longer required**. This was investigated extensively — see "Multi-operator input attribution" below and [docs/architecture-options.md](docs/architecture-options.md) — and confirmed architecturally impossible to solve cleanly on this stack without a custom RDP proxy plugin or a pair of synced GNOME Shell extensions. That investigation and its conclusions are kept as historical record (the reasoning may be useful again if a similar requirement returns), but no further engineering work should be scoped against it. The single-operator case remains the active target.
+
 To make it look realalistic the MDI background should look like a radar image. A cool effect if the green indicator than old radars have would cycle as an animation. The windows will be on the side/top of this.
 
 Another requirement that can be a bit tough with a VM is having multiple monitors. Particular with RDP sessions - advice is needed. One aspect is that a particular window/application output will be pinned to a specific monitor, while another is where the operators keep other windows, type in data etc.
@@ -100,7 +102,7 @@ Conclusions from the current design discussion:
 - Visual style: strict Motif-inspired look and behavior; preserve old-school widget and window-management feel.
 - App model: a single MDI-style main application with child windows for now.
 - App model update: drop the fake MDI; use separate real GtkWindow toplevels so Mutter handles move/resize/focus/stacking.
-- Session model: multiple RDP endpoints/ports with different access roles.
+- Session model: multiple RDP endpoints/ports with different access roles. **Dropped 2026-07-27 — see the requirement-dropped note above; multi-operator attribution/roles are no longer required, single-operator is the active target.**
 - Remote access baseline: enable both RDP and VNC against the active kiosk desktop so two remote clients can connect to the same live session.
 - Remote access implementation note: avoid approval/keyring popups in kiosk mode by unlocking keyring at session start (when needed) and using boot-time credential provisioning only.
 - Remote access startup ordering matters: avoid enabling `gnome-remote-desktop.service` persistently for kiosk autologin; start it from kiosk boot logic after keyring/credentials setup.
@@ -152,6 +154,8 @@ To get predictable startup placement on RHEL10 while staying on supported compon
 - Window locking for alert-style popups should be handled later with real toplevel window behavior, not in-app MDI widgets.
 
 ## Remote access topology options (same live kiosk desktop)
+
+**Note (2026-07-27):** the multi-operator/per-role access options below (Options 1–3, SSH tunnel role split) were built against the now-dropped multi-operator requirement (see the note near the top of this file). Kept as historical record; the single-operator RDP baseline remains the active target and is unaffected.
 
 Primary implementation target for this demo is a **single RHEL-compatible path**:
 - Server: GNOME Remote Desktop RDP backend on port 3389
@@ -242,9 +246,9 @@ Example usage:
 
 **Confirmed broken for concurrent viewing (2026-07-09):** the user tested this directly — first VNC connection works, second just hangs waiting, never actually connects. GNOME's VNC backend (`gnome-remote-desktop`) does not appear to support true concurrent multi-viewer RFB sharing the way standalone VNC servers (TigerVNC, x11vnc) do; it services one active viewer and leaves a second connection half-open. The `socat`-based fanout (5901/5902 → 5900) can't fix this — it's a dumb byte-forwarder sitting in front of a backend that's the actual bottleneck. **This whole VNC-based role-split scheme does not deliver its intended purpose (two concurrent viewers) and should be treated as non-functional for that goal**, not just "for testing convenience" as originally framed above. RDP was already the designated primary path (see "Remote access topology options" below) — this finding reinforces staying on RDP, it doesn't require any rework of the RDP-based plan.
 
-## Multi-operator input attribution (2026-07-09)
+## Multi-operator input attribution (2026-07-09) — requirement dropped 2026-07-27, kept as historical record
 
-Requirement: with two RDP operators (`user`, `supervisor`) sharing the same live kiosk desktop, the app needs to know which one generated a given input event, and needs to be able to lock a window to supervisor-only.
+Requirement (**no longer active** — see the requirement-dropped note near the top of this file): with two RDP operators (`user`, `supervisor`) sharing the same live kiosk desktop, the app needs to know which one generated a given input event, and needs to be able to lock a window to supervisor-only.
 
 **Empirically confirmed dead end, precise mechanism (refined 2026-07-09):** GTK/Wayland cannot distinguish input source across concurrent RDP sessions sharing one live desktop — but this is **not** a general "Wayland hides device identity from apps" policy. `gdk_event_get_device()`/`gdk_event_get_seat()` are real, normal APIs (used for the diagnostic test below) and genuinely do report device/seat identity when it exists. Two more specific facts combine to produce the dead end:
 1. The core Wayland pointer/keyboard wire protocol (`wl_pointer`/`wl_keyboard`, scoped to `wl_seat`) simply has no per-device field in its messages — this mirrors X11's default "Core Pointer"/"Core Keyboard" behavior (that's literally where the name comes from), where two ordinary physical mice have *always* merged into one cursor unless an app specifically reaches for XInput2, which almost none do. Real per-device disambiguation was never the default on either display protocol.

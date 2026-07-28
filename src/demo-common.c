@@ -348,12 +348,8 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
             show_window_by_kind(app, kind);
         }
     } else if (g_strcmp0(target, "all") == 0) {
-        /* Radar is a pure background layer, never explicitly "shown" --
-         * see lowerRadar() in the extension and the button-list skip
-         * above. */
         for (guint i = 0; i < WIN_COUNT; i++)
-            if (i != WIN_RADAR)
-                show_window(&app->windows[i]);
+            show_window(&app->windows[i]);
     } else if (g_strcmp0(target, "save") == 0) {
         save_layout(app);
     } else if (g_strcmp0(target, "reset") == 0) {
