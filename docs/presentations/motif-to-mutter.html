@@ -1,0 +1,779 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From Motif to Mutter</title>
+<meta name="description" content="Technical briefing: why RHEL 10 removes X11, what GNOME/Wayland's window-management API allows vs. Motif/X11, and what porting legacy code requires.">
+<style>
+  :root {
+    --bg: #eef1f2;
+    --surface: #ffffff;
+    --surface-alt: #e3e8ea;
+    --ink: #171b1f;
+    --ink-soft: #4b5560;
+    --ink-faint: #7c8791;
+    --motif: #8f5f24;
+    --motif-ink: #6e4a1c;
+    --motif-bg: #f4ead9;
+    --wayland: #196f67;
+    --wayland-bg: #dff1ee;
+    --alert: #a13a29;
+    --alert-bg: #f6e2dd;
+    --rule: #d3d9dc;
+    --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-body: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171a;
+      --surface: #1b2025;
+      --surface-alt: #222930;
+      --ink: #edf1f3;
+      --ink-soft: #a3adb6;
+      --ink-faint: #74818b;
+      --motif: #d9a25a;
+      --motif-ink: #e6b878;
+      --motif-bg: #2b2013;
+      --wayland: #5cc0b4;
+      --wayland-bg: #102825;
+      --alert: #e2836c;
+      --alert-bg: #2e1c17;
+      --rule: #2a3238;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #14171a;
+    --surface: #1b2025;
+    --surface-alt: #222930;
+    --ink: #edf1f3;
+    --ink-soft: #a3adb6;
+    --ink-faint: #74818b;
+    --motif: #d9a25a;
+    --motif-ink: #e6b878;
+    --motif-bg: #2b2013;
+    --wayland: #5cc0b4;
+    --wayland-bg: #102825;
+    --alert: #e2836c;
+    --alert-bg: #2e1c17;
+    --rule: #2a3238;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.65;
+    scroll-snap-type: y proximity;
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+    margin: 0;
+    color: var(--ink);
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 0.9rem;
+  }
+
+  .eyebrow.motif { color: var(--motif); }
+  .eyebrow.wayland { color: var(--wayland); }
+  .eyebrow.alert { color: var(--alert); }
+
+  p { margin: 0 0 1rem; max-width: 62ch; color: var(--ink); }
+  p:last-child { margin-bottom: 0; }
+
+  .deck {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+  }
+
+  .slide {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    padding: 5.5rem 0 4.5rem;
+    border-bottom: 1px solid var(--rule);
+    scroll-snap-align: start;
+    position: relative;
+  }
+
+  .slide-inner {
+    display: grid;
+    grid-template-columns: 84px 1fr;
+    gap: 2.5rem;
+    width: 100%;
+  }
+
+  .rail {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+
+  .rail-num {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    letter-spacing: 0.04em;
+  }
+
+  .rail-line {
+    width: 2px;
+    flex: 1;
+    min-height: 3rem;
+    background: var(--rule);
+    border-radius: 2px;
+  }
+
+  .slide[data-accent="motif"] .rail-line { background: var(--motif); }
+  .slide[data-accent="wayland"] .rail-line { background: var(--wayland); }
+  .slide[data-accent="alert"] .rail-line { background: var(--alert); }
+
+  .slide-content { max-width: 980px; }
+
+  .slide-title {
+    font-size: clamp(1.9rem, 3.6vw, 3.1rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.06;
+    margin-bottom: 1.5rem;
+  }
+
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+  }
+
+  ul.facts, ul.checklist {
+    list-style: none;
+    margin: 1.4rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.85rem;
+    max-width: 68ch;
+  }
+
+  ul.facts li, ul.checklist li {
+    position: relative;
+    padding-left: 1.6rem;
+    color: var(--ink);
+  }
+
+  ul.facts li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.55em;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ink-faint);
+  }
+
+  .slide[data-accent="alert"] ul.facts li::before { background: var(--alert); }
+  .slide[data-accent="wayland"] ul.facts li::before { background: var(--wayland); }
+
+  ul.checklist { counter-reset: step; }
+  ul.checklist li { padding-left: 2.2rem; }
+  ul.checklist li::before {
+    counter-increment: step;
+    content: counter(step, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: -0.05em;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--wayland);
+    font-weight: 600;
+  }
+
+  .checklist-item-title {
+    font-weight: 700;
+    display: block;
+    margin-bottom: 0.15rem;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-top: 1.75rem;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1.5rem 1.6rem;
+  }
+
+  .panel-motif { border-top: 3px solid var(--motif); }
+  .panel-wayland { border-top: 3px solid var(--wayland); }
+
+  .panel-label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+
+  .panel-motif .panel-label { color: var(--motif); }
+  .panel-wayland .panel-label { color: var(--wayland); }
+
+  .panel-quote {
+    font-style: italic;
+    color: var(--ink-soft);
+    margin-bottom: 0.75rem;
+    font-size: 0.98rem;
+  }
+
+  .panel p { font-size: 0.98rem; }
+
+  .table-wrap {
+    overflow-x: auto;
+    margin-top: 1.6rem;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    max-width: 100%;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 640px;
+    background: var(--surface);
+    font-size: 0.94rem;
+  }
+
+  caption { display: none; }
+
+  th, td {
+    text-align: left;
+    padding: 0.85rem 1.1rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  thead th {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-alt);
+  }
+
+  thead th.col-motif { color: var(--motif); }
+  thead th.col-wayland { color: var(--wayland); }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  td.cap-row { font-weight: 700; font-family: var(--font-display); }
+
+  td.no { color: var(--alert); }
+  td.yes { color: var(--wayland); }
+
+  .status-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .status-pill.no { color: var(--alert); }
+  .status-pill.yes { color: var(--wayland); }
+  .status-pill.partial { color: var(--motif); }
+
+  .note {
+    margin-top: 1.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    color: var(--ink-faint);
+    border-left: 2px solid var(--rule);
+    padding-left: 0.9rem;
+    max-width: 60ch;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+    background: var(--surface-alt);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
+  /* Title slide */
+  #slide-1 {
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .radar {
+    position: absolute;
+    right: -8%;
+    top: 50%;
+    transform: translateY(-50%);
+    width: min(58vw, 620px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+
+  .radar-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+  }
+  .radar-ring:nth-child(2) { inset: 12%; }
+  .radar-ring:nth-child(3) { inset: 26%; }
+  .radar-ring:nth-child(4) { inset: 40%; }
+
+  .radar-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg, transparent 0deg, color-mix(in srgb, var(--wayland) 45%, transparent) 6deg, transparent 34deg);
+    animation: sweep 7s linear infinite;
+  }
+
+  @keyframes sweep {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .radar-sweep { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  .title-block { position: relative; z-index: 1; max-width: 720px; }
+
+  .title-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 1.4rem;
+  }
+
+  .title-main {
+    font-size: clamp(2.6rem, 6vw, 4.6rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.02;
+    margin-bottom: 1.6rem;
+  }
+
+  .title-main .accent-motif { color: var(--motif); }
+  .title-main .accent-wayland { color: var(--wayland); }
+
+  .title-sub {
+    font-family: var(--font-body);
+    font-size: 1.2rem;
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin-bottom: 2rem;
+  }
+
+  .title-meta {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+  }
+
+  .title-meta span::before { content: "· "; color: var(--rule); }
+  .title-meta span:first-child::before { content: ""; }
+
+  /* Dot nav */
+  .dotnav {
+    position: fixed;
+    right: 1.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    z-index: 10;
+  }
+
+  .dotnav button {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1px solid var(--ink-faint);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.2s;
+  }
+
+  .dotnav button:hover { transform: scale(1.25); }
+
+  .dotnav button.active {
+    background: var(--ink);
+    border-color: var(--ink);
+  }
+
+  .dotnav button:focus-visible {
+    outline: 2px solid var(--wayland);
+    outline-offset: 3px;
+  }
+
+  @media (max-width: 780px) {
+    .slide-inner { grid-template-columns: 1fr; }
+    .rail { flex-direction: row; align-items: center; }
+    .rail-line { width: auto; height: 2px; flex: 1; min-width: 2rem; min-height: 0; }
+    .split { grid-template-columns: 1fr; }
+    .dotnav { display: none; }
+    .radar { display: none; }
+  }
+
+  .closing-list {
+    list-style: none;
+    padding: 0;
+    margin: 1.6rem 0 0;
+    display: grid;
+    gap: 0.6rem;
+    max-width: 70ch;
+  }
+  .closing-list li {
+    font-size: 0.94rem;
+    color: var(--ink-soft);
+    padding-bottom: 0.6rem;
+    border-bottom: 1px dashed var(--rule);
+  }
+  .closing-list li:last-child { border-bottom: none; }
+  .closing-list a { color: var(--ink); text-decoration-color: var(--ink-faint); }
+  .closing-list .src-url {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+    margin-top: 0.15rem;
+    word-break: break-all;
+  }
+
+  .cite {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--ink-faint);
+    text-underline-offset: 2px;
+  }
+  a.cite:hover { text-decoration-color: currentColor; }
+
+  .prompt {
+    margin-top: 2.2rem;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.3rem;
+  }
+</style>
+</head>
+<body>
+
+<nav class="dotnav" aria-label="Slide navigation"></nav>
+
+<div class="deck">
+
+  <section class="slide" id="slide-1" data-accent="neutral">
+    <div class="radar" aria-hidden="true">
+      <div class="radar-ring"></div>
+      <div class="radar-ring"></div>
+      <div class="radar-ring"></div>
+      <div class="radar-ring"></div>
+      <div class="radar-sweep"></div>
+    </div>
+    <div class="title-block">
+      <div class="title-eyebrow">Technical briefing — window management on RHEL 10</div>
+      <h1 class="title-main">From <span class="accent-motif">Motif</span> to <span class="accent-wayland">Mutter</span></h1>
+      <p class="title-sub">What changes when a Motif/X11 desktop application has to run on a modern GNOME/Wayland compositor — and what it takes to close the gap.</p>
+      <div class="title-meta">
+        <span>Window management</span>
+        <span>GTK4 / Wayland</span>
+        <span>RHEL 10</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-2" data-accent="neutral">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">02</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow">The need</p>
+        <h2 class="slide-title">Kiosk software still expects a 1990s window manager</h2>
+        <p class="lede">Long-lived kiosk and control-room applications were built against Motif/X11 conventions — an application-managed desktop where the client program places windows at exact coordinates, pins panels above everything else, and owns much of what would today be called "the desktop."</p>
+        <p class="lede">RHEL 10 retires the platform that made those conventions possible. Any application carrying that assumption forward needs a clear account of what changes, what simply no longer exists, and what has to be rebuilt on top of the compositor GNOME now owns exclusively.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-3" data-accent="neutral">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">03</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow">Framing</p>
+        <h2 class="slide-title">Two window-management models, not two skins</h2>
+        <p class="lede">The change is architectural before it is visual: who is allowed to decide where a window sits, and how it behaves.</p>
+        <div class="split">
+          <div class="panel panel-motif">
+            <div class="panel-label">Motif / X11</div>
+            <p class="panel-quote">The application is the window manager's peer.</p>
+            <p>Clients request placement and state directly through the X protocol. A separate, swappable window manager (<code>mwm</code>) enforces policy, but many applications talk past it with their own hints and direct calls.</p>
+          </div>
+          <div class="panel panel-wayland">
+            <div class="panel-label">GNOME / Mutter (Wayland)</div>
+            <p class="panel-quote">The compositor is the only authority.</p>
+            <p>Mutter is simultaneously the display server, the window manager, and the compositor. A client can request things, but the compositor decides — and most placement and stacking requests have no protocol representation at all.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-4" data-accent="alert">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">04</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow alert">Platform fact</p>
+        <h2 class="slide-title">There is no GNOME-on-X11 session in RHEL 10</h2>
+        <ul class="facts">
+          <li>The Xorg server package is removed from RHEL 10 (<a class="cite" href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/10.0_release_notes/removed-features" target="_blank" rel="noopener">RHEL 10.0 Release Notes, "Removed features"</a>).</li>
+          <li>RHEL 10's GNOME session picker offers only Wayland-based sessions — "GNOME Standard" and "GNOME Classic" — with no X11 option.</li>
+          <li>Upstream GNOME is removing the X11 session backend from its own codebase on the same schedule: disabled by default in GNOME 49, deleted entirely in GNOME 50 (<a class="cite" href="https://blogs.gnome.org/alatiera/2025/06/23/x11-session-removal-faq/" target="_blank" rel="noopener">GNOME, "X11 Session Removal FAQ"</a>).</li>
+          <li>Motif and <code>mwm</code> are separately documented by Red Hat as deprecated (<a class="cite" href="https://access.redhat.com/solutions/6113101" target="_blank" rel="noopener">"Motif packages are deprecated"</a>); the <code>motif-static</code> package has been removed, and Red Hat's own guidance names GTK as the replacement toolkit.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-5" data-accent="wayland">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">05</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow wayland">Platform fact</p>
+        <h2 class="slide-title">XWayland is a compatibility layer, not a fallback session</h2>
+        <ul class="facts">
+          <li>XWayland lets an existing X11 binary keep running, translated, inside a Wayland session. <a class="cite" href="https://blogs.gnome.org/alatiera/2025/06/23/x11-session-removal-faq/" target="_blank" rel="noopener">GNOME's own project FAQ</a> states it plainly: "what's going away is the GNOME on Xorg session, not the Xorg server itself&nbsp;&hellip; XWayland will be around with us for decades."</li>
+          <li>It is not a standalone X server — there is no independent Xorg process to point a separate window manager at, and no supported way to run <code>mwm</code> as the session's actual window manager (Red Hat's own <a class="cite" href="https://access.redhat.com/solutions/7020107" target="_blank" rel="noopener">MWM-on-RHEL how-to</a> covers RHEL 7&ndash;9 only, with no RHEL 10 continuation).</li>
+          <li>An unmodified legacy X11/Motif binary can still launch and draw under XWayland. What it cannot do is gain any new window-manager-level capability from the host session — those requests still terminate at Mutter, not at a real X11 window manager.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-6" data-accent="neutral">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">06</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow">API surface</p>
+        <h2 class="slide-title">What the client is allowed to ask for</h2>
+        <p class="lede">Same intent, different protocol. Each row is a request an old Motif/X11 application could make directly — and its status under GTK4/Wayland.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Capability</th><th class="col-motif">Motif / X11</th><th class="col-wayland">GTK4 / Wayland (Mutter)</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="cap-row">Absolute window position (get/set x, y)</td><td>Yes — <code>XMoveWindow</code>, WM size hints</td><td class="no">No client-facing request exists</td></tr>
+              <tr><td class="cap-row">Always-on-top / stays-above-all</td><td>Yes — <code>_NET_WM_STATE_ABOVE</code>, Motif hints</td><td class="no">No protocol request; the corresponding GTK API was removed</td></tr>
+              <tr><td class="cap-row">Reserved screen edge for a bar/panel</td><td>Achievable via window-manager cooperation</td><td class="no">Protocol exists (<code>wlr-layer-shell</code>) but is a wlroots-ecosystem extension Mutter does not implement</td></tr>
+              <tr><td class="cap-row">Replace the window manager</td><td>Yes — any WM can replace another</td><td class="no">No — compositor and window manager are one fused process</td></tr>
+              <tr><td class="cap-row">Minimize / restore honored on request</td><td>Yes, via WM hints</td><td>Advisory only — <code>xdg_toplevel.set_minimized</code> may be silently ignored, and behavior varies by compositor version</td></tr>
+              <tr><td class="cap-row">Independently identified pointers/keyboards in one session</td><td>Yes — Multi-Pointer X, since 2009</td><td class="no">No — one seat per session by protocol design</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-7" data-accent="wayland">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">07</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow wayland">Migration checklist</p>
+        <h2 class="slide-title">What a developer has to change</h2>
+        <ul class="checklist">
+          <li><span class="checklist-item-title">Re-platform the toolkit.</span>Xt/Motif widget code has no supported path forward on RHEL 10; Red Hat's documented direction is GTK4.</li>
+          <li><span class="checklist-item-title">Remove dependence on absolute placement.</span>Any logic that sets or reads window x/y in screen coordinates has no client-side equivalent, and needs to be redesigned around compositor-driven placement or an in-application layout model.</li>
+          <li><span class="checklist-item-title">Remove "always on top" as a client-side request.</span>No Wayland client protocol grants this; a stays-above-all requirement has to move out of the application process entirely.</li>
+          <li><span class="checklist-item-title">Treat window-state requests as advisory, not guaranteed.</span>Minimize, stacking, and similar hint-based requests can be silently ignored by the compositor, and the same request can behave differently across compositor versions.</li>
+          <li><span class="checklist-item-title">Drop direct Xlib/Xt/X-protocol calls.</span>Replace with GDK/GTK4 equivalents; libraries that assume a live, standalone X server process are not supported going forward.</li>
+          <li><span class="checklist-item-title">Re-architect multi-pointer or multi-seat input designs.</span>Wayland's one-seat-per-session model has no Multi-Pointer X equivalent; per-device input identity is not available to an ordinary client.</li>
+          <li><span class="checklist-item-title">Scope XWayland correctly.</span>Useful as a bridge to keep an unmodified legacy binary running — not a foundation for new window-management functionality.</li>
+          <li><span class="checklist-item-title">Plan for compositor version differences.</span>A hint honored on one shipped Mutter version is not guaranteed on another, including across RHEL 10 point releases.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-8" data-accent="alert">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">08</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow alert">The gap</p>
+        <h2 class="slide-title">Some capabilities only exist inside the compositor process</h2>
+        <p class="lede">A defined set of window-management capabilities exist as real, documented operations on Mutter's internal window object — but only for code running inside the compositor itself. No Wayland client protocol exposes an equivalent request to ordinary applications, regardless of toolkit.</p>
+        <p class="lede">The only supported way to reach that internal API from application logic is a GNOME Shell extension: JavaScript running in-process with the compositor. RHEL 10 documents installing and enabling such extensions system-wide as a standard administrative task (<a class="cite" href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/administering_rhel_by_using_the_gnome_desktop_environment/enabling-and-enforcing-gnome-shell-extensions" target="_blank" rel="noopener">"Enabling and enforcing GNOME Shell extensions"</a>).</p>
+        <div class="note">In-process only: absolute get/set window position &middot; forced above-all stacking (dock-style pinning) &middot; enforced minimize/restore</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-9" data-accent="alert">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">09</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow alert">Consequence</p>
+        <h2 class="slide-title">One application becomes two coordinated programs</h2>
+        <ul class="facts">
+          <li>Application logic now spans two runtime domains: the ordinary GTK4 client process, and JavaScript running inside the compositor as a Shell extension — different language, different process, different lifecycle.</li>
+          <li>Any capability that needs the in-compositor API has to cross that boundary through an explicit interface, typically D-Bus, instead of a single in-process function call — a message contract to define, version, and keep in sync on both sides.</li>
+          <li>The extension and the application ship, version, and get enabled or disabled independently of one another — more moving parts to deploy and keep compatible than a single-process client application has.</li>
+          <li>The extension's correctness depends on Mutter/GNOME Shell internals rather than a stable public protocol — an internal API, not bound by the same compatibility guarantees as a documented Wayland protocol.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-10" data-accent="neutral">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">10</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow">Summary</p>
+        <h2 class="slide-title">What's reachable, and from where</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Capability</th><th>Plain GTK4 client</th><th>+ GNOME Shell extension</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="cap-row">Absolute position get/set</td><td><span class="status-pill no">Not available</span></td><td><span class="status-pill yes">Available</span></td></tr>
+              <tr><td class="cap-row">Always-on-top / dock pinning</td><td><span class="status-pill no">Not available</span></td><td><span class="status-pill yes">Available</span></td></tr>
+              <tr><td class="cap-row">Reserved-edge bar (layer-shell-style)</td><td><span class="status-pill no">Not available</span></td><td><span class="status-pill partial">Manual workaround only</span></td></tr>
+              <tr><td class="cap-row">Guaranteed minimize/restore</td><td><span class="status-pill partial">Advisory, version-dependent</span></td><td><span class="status-pill yes">Available</span></td></tr>
+              <tr><td class="cap-row">Replace the window manager</td><td><span class="status-pill no">Not available</span></td><td><span class="status-pill no">Not available</span></td></tr>
+              <tr><td class="cap-row">Independently identified multi-seat input</td><td><span class="status-pill no">Not available</span></td><td><span class="status-pill no">Not available</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">A Shell extension closes most of the gap left by the client protocol — but not all of it. Fusing the window manager into the compositor, and Wayland's one-seat-per-session model, are architectural choices an extension operates inside of, not around.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-11" data-accent="wayland">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">11</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow wayland">Discussion</p>
+        <h2 class="slide-title">A supported shim would change the shape of this problem</h2>
+        <p class="lede">The capabilities most legacy Motif/X11 kiosk and control-room applications actually need are a small, well-defined set: absolute window position, stays-above-all pinning, and reliable minimize/restore. Reaching any of them today requires each project to independently author, ship, and maintain its own GNOME Shell extension against Mutter's internal API — an internal surface with no compatibility guarantee, re-derived from source by every team that needs it.</p>
+        <p class="lede">A Red Hat-supported alternative would look like one officially maintained GNOME Shell extension, exposing a small, stable, versioned interface for exactly this capability set, packaged and updated in step with each RHEL point release. Paired with a thin client-side library, an application would call a documented, supported API instead of re-implementing compositor-internal logic and an ad hoc IPC contract per project. Compatibility across Mutter versions — the same version skew visible between what RHEL 10 ships and what upstream GNOME already supports — would become Red Hat's maintenance surface instead of every downstream team's.</p>
+        <p class="lede">This does not restore Motif or X11. It narrows the gap between what legacy window-management code expects and what a supported RHEL 10 desktop can actually grant, down to one documented interface instead of one bespoke extension per application.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" id="slide-12" data-accent="neutral">
+    <div class="slide-inner">
+      <div class="rail"><span class="rail-num">12</span><span class="rail-line"></span></div>
+      <div class="slide-content">
+        <p class="eyebrow">Sources</p>
+        <h2 class="slide-title">References</h2>
+        <ul class="closing-list">
+          <li>Red Hat — <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/10.0_release_notes/removed-features" target="_blank" rel="noopener">RHEL 10.0 Release Notes, "Removed features"</a> (Xorg server removed from RHEL 10)
+            <span class="src-url">docs.redhat.com/&hellip;/10.0_release_notes/removed-features</span>
+          </li>
+          <li>Red Hat Customer Portal — <a href="https://access.redhat.com/solutions/6113101" target="_blank" rel="noopener">"Motif packages are deprecated"</a> (solution 6113101)
+            <span class="src-url">access.redhat.com/solutions/6113101</span>
+          </li>
+          <li>Red Hat Customer Portal — <a href="https://access.redhat.com/solutions/7020107" target="_blank" rel="noopener">"How to use Motif Window Manager (MWM) instead of GNOME on RHEL"</a> (solution 7020107)
+            <span class="src-url">access.redhat.com/solutions/7020107</span>
+          </li>
+          <li>Red Hat — <em>Administering RHEL by using the GNOME desktop environment</em>, RHEL 10, <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/administering_rhel_by_using_the_gnome_desktop_environment/enabling-and-enforcing-gnome-shell-extensions" target="_blank" rel="noopener">Chapter 16, "Enabling and enforcing GNOME Shell extensions"</a>
+            <span class="src-url">docs.redhat.com/&hellip;/enabling-and-enforcing-gnome-shell-extensions</span>
+          </li>
+          <li>GNOME Project — <a href="https://blogs.gnome.org/alatiera/2025/06/23/x11-session-removal-faq/" target="_blank" rel="noopener">"X11 Session Removal FAQ"</a>
+            <span class="src-url">blogs.gnome.org/alatiera/2025/06/23/x11-session-removal-faq</span>
+          </li>
+        </ul>
+        <p class="prompt">Discussion</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var nav = document.querySelector('.dotnav');
+    slides.forEach(function (s, i) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-label', 'Go to slide ' + (i + 1) + ' of ' + slides.length);
+      b.addEventListener('click', function () {
+        s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      nav.appendChild(b);
+    });
+    var dots = Array.prototype.slice.call(nav.querySelectorAll('button'));
+
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          var idx = slides.indexOf(entry.target);
+          dots.forEach(function (d, i) { d.classList.toggle('active', i === idx); });
+        }
+      });
+    }, { threshold: 0.55 });
+    slides.forEach(function (s) { io.observe(s); });
+
+    document.addEventListener('keydown', function (e) {
+      if (['ArrowDown', 'PageDown', ' '].indexOf(e.key) === -1 &&
+          ['ArrowUp', 'PageUp'].indexOf(e.key) === -1) return;
+      var current = slides.findIndex(function (s) {
+        var r = s.getBoundingClientRect();
+        return r.top <= 1 && r.bottom > window.innerHeight * 0.5;
+      });
+      if (current === -1) current = 0;
+      var dir = (e.key === 'ArrowUp' || e.key === 'PageUp') ? -1 : 1;
+      var next = Math.min(slides.length - 1, Math.max(0, current + dir));
+      if (next !== current) {
+        e.preventDefault();
+        slides[next].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  })();
+</script>
+</body>
+</html>
