@@ -6,12 +6,20 @@
 #define APP_ID "com.demo.GnomeKioskDemo"
 #define CONFIG_DIR_NAME "gnome-kiosk-demo"
 #define CONFIG_FILE_NAME "layout.ini"
+#define FACTORY_CONFIG_FILE_NAME "layout-factory.ini"
 
 /* Title of the standalone menu-bar window (must match the extension's
  * MENU_BAR_TITLE) and its fixed height in pixels. Only used when
  * DemoApp.use_separate_menu_bar is set (gnome-shell build). */
 #define MENU_BAR_TITLE "M & C GLOBAL MENU"
-#define MENU_BAR_HEIGHT 84
+/* 84 turned out too tight for the header row + button row combined --
+ * their un-scrolled natural height exceeded it, hitting the same GTK4
+ * content-floor bug fixed for GROUND OPS/SYSTEM STATUS (2026-08-18): a
+ * size the client's own layout won't honor blocks the coupled Wayland
+ * position update too, which is why the bar itself was observed not
+ * actually sitting at the top of the screen despite ConfigureKioskChrome
+ * requesting exactly that. 110 gives the two rows real room. */
+#define MENU_BAR_HEIGHT 110
 
 typedef enum {
     WIN_RADAR = 0,
@@ -52,6 +60,7 @@ typedef struct {
     GtkApplication *application;
     GtkCssProvider *css_provider;
     gchar *config_path;
+    gchar *factory_config_path;
     guint radar_tick_id;
     guint data_tick_id;
     guint generation;
@@ -82,6 +91,7 @@ void demo_app_shutdown(GtkApplication *application, gpointer user_data);
 void apply_window_size(DemoWindow *win, int width, int height);
 void persistable_window_size(DemoWindow *win, int *width, int *height);
 void update_control_button_state(DemoWindow *win);
+void apply_minimal_factory_layout(DemoApp *app);
 
 /*
  * The only pieces that differ per backend: exact window position and
@@ -96,6 +106,17 @@ void update_control_button_state(DemoWindow *win);
  */
 gboolean apply_saved_layout(DemoApp *app);
 void save_layout(DemoApp *app);
+
+/* RESET's "factory reset": identical mechanism to apply_saved_layout()
+ * above (same file format, same per-window fields including position),
+ * just pointed at app->factory_config_path (an admin-provisioned,
+ * app-immutable file -- SAVE only ever writes app->config_path) instead of
+ * the user's own saved layout. RESET and LOAD are the same operation with
+ * a different data source, per the user's own framing (2026-08-18). Falls
+ * back to a minimal hardcoded reset (size only, no position) if the
+ * factory file itself is missing/unreadable, so RESET never silently
+ * no-ops even with incomplete provisioning. */
+gboolean apply_factory_layout(DemoApp *app);
 
 /* Live per-click minimize/restore toggle (as opposed to bulk LOAD/RESET,
  * handled by apply_saved_layout above). gnome-kiosk.c keeps the plain GTK4

@@ -60,6 +60,19 @@
     mode: "0755"
   become: true
 
+- name: Install factory-default layout profile
+  # Admin-provisioned, app-immutable -- the app's SAVE button only ever
+  # writes layout.ini (the user profile), never this file. RESET loads
+  # this through the exact same mechanism as LOAD, just a different path
+  # (see apply_factory_layout() in src/demo-common.h).
+  ansible.builtin.copy:
+    src: layout-factory.ini
+    dest: "/home/{{ kiosk_user }}/.config/gnome-kiosk-demo/layout-factory.ini"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0644"
+  become: true
+
 - name: Remove stale extension directory before re-copying
   # scp/cp -r into an already-existing destination nests instead of
   # replacing (the bug that cost a whole debugging session on 2026-07-22

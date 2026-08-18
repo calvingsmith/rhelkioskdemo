@@ -35,9 +35,8 @@ static GtkWidget *build_radar_window_content(DemoApp *app);
 static GtkWidget *build_menu_toolbar(DemoApp *app);
 static void build_menu_bar_window(DemoApp *app);
 static void refresh_menu_bar_chrome(DemoApp *app);
-static gboolean initial_menu_bar_chrome_cb(gpointer user_data);
+static void schedule_layout_retry(DemoApp *app, gboolean use_factory);
 static void show_default_windows(DemoApp *app);
-static void apply_factory_layout(DemoApp *app);
 static gchar *generate_callsign(void);
 static GtkWidget *build_window_header(const char *title);
 static GtkWidget *build_thin_titlebar(DemoWindow *win);
@@ -101,6 +100,18 @@ config_path_for_app(void)
     return path;
 }
 
+/* Admin-provisioned, app-immutable factory-default layout -- see
+ * apply_factory_layout() in demo-common.h. Lives alongside the user's own
+ * layout.ini but is never written by the app itself. */
+static gchar *
+factory_config_path_for_app(void)
+{
+    gchar *dir = g_build_filename(g_get_user_config_dir(), CONFIG_DIR_NAME, NULL);
+    gchar *path = g_build_filename(dir, FACTORY_CONFIG_FILE_NAME, NULL);
+    g_free(dir);
+    return path;
+}
+
 static DemoWindow *
 find_window(DemoApp *app, DemoWindowKind kind)
 {
@@ -149,6 +160,7 @@ update_control_button_state(DemoWindow *win)
 static void
 set_window_minimized(DemoWindow *win, gboolean minimized)
 {
+    g_message("set_window_minimized: %s -> %s", win->id, minimized ? "minimized" : "restored");
     if (win->kind == WIN_RADAR)
         return;
 
@@ -337,6 +349,8 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
     const char *target = g_object_get_data(G_OBJECT(button), "target");
     DemoWindowKind kind;
 
+    g_message("on_menu_button_clicked: target=%s", target ? target : "(null)");
+
     if (target_to_kind(target, &kind)) {
         DemoWindow *win = find_window(app, kind);
         if (kind != WIN_RADAR) {
@@ -357,15 +371,13 @@ on_menu_button_clicked(GtkButton *button, gpointer user_data)
         apply_factory_layout(app);
         show_default_windows(app);
         update_text_windows(app);
-        if (app->use_separate_menu_bar)
-            g_timeout_add(200, initial_menu_bar_chrome_cb, app);
+        schedule_layout_retry(app, TRUE);
     } else if (g_strcmp0(target, "load") == 0) {
         if (!apply_saved_layout(app))
             apply_factory_layout(app);
         show_default_windows(app);
         update_text_windows(app);
-        if (app->use_separate_menu_bar)
-            g_timeout_add(200, initial_menu_bar_chrome_cb, app);
+        schedule_layout_retry(app, FALSE);
     }
 }
 
@@ -374,6 +386,7 @@ on_window_minimize_clicked(GtkButton *button, gpointer user_data)
 {
     (void) button;
     DemoWindow *win = user_data;
+    g_message("on_window_minimize_clicked: %s", win->id);
     set_window_minimized(win, TRUE);
 }
 
@@ -435,6 +448,18 @@ build_text_window_content(DemoWindow *win, GtkTextBuffer **out_buffer)
     gtk_box_append(GTK_BOX(outer), scroller);
 
     if (win->kind == WIN_GROUND) {
+        /* Wrapped in its own scroller, same idiom as the text view above:
+         * an un-wrapped box's natural width (fitting all three checkbox
+         * labels) becomes a hard floor GTK4 won't shrink the toplevel
+         * below -- confirmed live 2026-08-18 as the actual root cause of
+         * GROUND OPS getting permanently stuck at 521px wide regardless of
+         * any saved/factory target, which (since Wayland couples
+         * position+size into one configure/commit) also silently blocked
+         * the position update entirely. A plain gtk_widget_set_size_request()
+         * on the outer box does NOT fix this -- GTK4's box layout still
+         * takes the max of that and the child's own natural size; only a
+         * GtkScrolledWindow can report a smaller-than-natural minimum. */
+        GtkWidget *controls_scroller = gtk_scrolled_window_new();
         GtkWidget *controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         GtkWidget *cb1 = gtk_check_button_new_with_label("Suppress Date");
         GtkWidget *cb2 = gtk_check_button_new_with_label("Suppress Time");
@@ -445,10 +470,12 @@ build_text_window_content(DemoWindow *win, GtkTextBuffer **out_buffer)
         gtk_widget_add_css_class(cb2, "motif-check");
         gtk_widget_add_css_class(cb3, "motif-check");
 
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(controls_scroller), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
         gtk_box_append(GTK_BOX(controls), cb1);
         gtk_box_append(GTK_BOX(controls), cb2);
         gtk_box_append(GTK_BOX(controls), cb3);
-        gtk_box_append(GTK_BOX(outer), controls);
+        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(controls_scroller), controls);
+        gtk_box_append(GTK_BOX(outer), controls_scroller);
     }
 
     *out_buffer = buffer;
@@ -459,6 +486,19 @@ static GtkWidget *
 build_status_window_content(DemoWindow *win, GtkWidget **out_label)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    /* Wrapped in a scroller, same idiom as the other windows' text view:
+     * this content (label + USER ID/PASSWORD grid) had no scroller at all,
+     * so its natural height became a hard floor GTK4 refused to shrink
+     * below -- confirmed live 2026-08-18 as the actual root cause of
+     * SYSTEM STATUS getting permanently stuck at ~205px tall regardless of
+     * any saved/factory target, which (Wayland couples position+size into
+     * one configure/commit) also silently blocked the position update. A
+     * plain gtk_widget_set_size_request() on the outer box does not fix
+     * this -- GTK4's box layout still takes the max of that and the
+     * child's own natural size; only a GtkScrolledWindow can report a
+     * smaller-than-natural minimum. */
+    GtkWidget *scroller = gtk_scrolled_window_new();
+    GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     GtkWidget *label = gtk_label_new("Ready");
     GtkWidget *form = gtk_grid_new();
     GtkWidget *user_label = gtk_label_new("USER ID:");
@@ -478,6 +518,9 @@ build_status_window_content(DemoWindow *win, GtkWidget **out_label)
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
     gtk_entry_set_visibility(GTK_ENTRY(pass_entry), FALSE);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_hexpand(scroller, TRUE);
+    gtk_widget_set_vexpand(scroller, TRUE);
 
     gtk_grid_set_column_spacing(GTK_GRID(form), 8);
     gtk_grid_set_row_spacing(GTK_GRID(form), 4);
@@ -490,8 +533,10 @@ build_status_window_content(DemoWindow *win, GtkWidget **out_label)
 
     g_signal_connect(close, "clicked", G_CALLBACK(on_window_minimize_clicked), win);
 
-    gtk_box_append(GTK_BOX(outer), label);
-    gtk_box_append(GTK_BOX(outer), form);
+    gtk_box_append(GTK_BOX(inner), label);
+    gtk_box_append(GTK_BOX(inner), form);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), inner);
+    gtk_box_append(GTK_BOX(outer), scroller);
 
     *out_label = label;
     return outer;
@@ -714,6 +759,14 @@ build_menu_toolbar(DemoApp *app)
 {
     GtkWidget *outer = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     GtkWidget *header = build_window_header("M & C GLOBAL MENU");
+    /* Defense-in-depth alongside the MENU_BAR_HEIGHT increase above: an
+     * un-scrolled button_row's natural size becoming a hard floor is
+     * exactly what silently blocked this window's own position update
+     * (see the MENU_BAR_HEIGHT comment in demo-common.h) -- wrapping it
+     * here too means a future content change can't reintroduce the same
+     * failure mode even if it pushes past whatever height turns out to be
+     * enough. */
+    GtkWidget *button_row_scroller = gtk_scrolled_window_new();
     GtkWidget *button_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget *window_buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -802,8 +855,20 @@ build_menu_toolbar(DemoApp *app)
         app->windows[WIN_RADAR].status_label = radar_status;
     }
 
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(button_row_scroller), GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(button_row_scroller), button_row);
+    /* Without this, GTK can settle back to the content's smaller natural
+     * height when committing ConfigureKioskChrome's move_resize_frame()
+     * request (a normal part of Wayland resize negotiation -- the
+     * compositor suggests a size, the client may commit a different,
+     * typically smaller one) -- leaving a visible gap between the bar's
+     * actual bottom edge and MENU_BAR_HEIGHT, where radar's own top edge
+     * is independently positioned. Expanding tells the content to fill
+     * whatever height it's actually granted instead of shrinking back. */
+    gtk_widget_set_vexpand(button_row_scroller, TRUE);
+
     gtk_box_append(GTK_BOX(outer), header);
-    gtk_box_append(GTK_BOX(outer), button_row);
+    gtk_box_append(GTK_BOX(outer), button_row_scroller);
 
     return outer;
 }
@@ -817,7 +882,17 @@ build_menu_bar_window(DemoApp *app)
     app->menu_bar_window = gtk_application_window_new(app->application);
     gtk_window_set_title(GTK_WINDOW(app->menu_bar_window), MENU_BAR_TITLE);
     gtk_window_set_decorated(GTK_WINDOW(app->menu_bar_window), FALSE);
-    gtk_window_set_resizable(GTK_WINDOW(app->menu_bar_window), FALSE);
+    /* Deliberately NOT calling gtk_window_set_resizable(FALSE) here, even
+     * though the bar should never actually be user-resized in practice
+     * (it's undecorated with no resize grips, and DOCK + make_above() +
+     * stick() in ConfigureKioskChrome already keep it pinned). On GTK4/
+     * Wayland, resizable=FALSE makes the client advertise a FIXED
+     * min==max==natural size via xdg_toplevel -- confirmed live
+     * 2026-08-18 as why the bar was stuck at a small clipped width no
+     * matter what ConfigureKioskChrome's move_resize_frame() requested
+     * (not just too-small requests, ANY different size, since the client
+     * had declared itself immutable). Letting it be resizable is what
+     * allows our own programmatic resize to actually take effect. */
     gtk_window_set_child(GTK_WINDOW(app->menu_bar_window), build_menu_toolbar(app));
 }
 
@@ -832,11 +907,56 @@ refresh_menu_bar_chrome(DemoApp *app)
         configure_menu_bar_window(app);
 }
 
+/* Re-runs the same layout application that was just done synchronously,
+ * repeatedly, every 200ms for a few attempts. This exists because that
+ * first, synchronous call can race Mutter's window-actor registration for
+ * newly-created/just-restored windows (confirmed live 2026-08-18: a
+ * window's saved position was silently skipped by the extension's D-Bus
+ * SetStates call because its Meta.Window wasn't in
+ * global.get_window_actors() yet at that exact moment, while every other
+ * window applied correctly). SetStates/GetStates are idempotent, so
+ * reapplying repeatedly is safe. A single retry attempt was not enough in
+ * practice (still observed missing windows after one 200ms retry, live
+ * 2026-08-18) -- this keeps retrying for up to ~1s total instead of
+ * assuming one retry is sufficient. */
+typedef struct {
+    DemoApp *app;
+    guint retries_left;
+    gboolean use_factory; /* TRUE: apply_factory_layout only (RESET).
+                            * FALSE: apply_saved_layout, falling back to
+                            * factory (startup/LOAD). */
+} LayoutRetryCtx;
+
 static gboolean
-initial_menu_bar_chrome_cb(gpointer user_data)
+layout_retry_cb(gpointer user_data)
 {
-    refresh_menu_bar_chrome(user_data);
+    LayoutRetryCtx *ctx = user_data;
+
+    if (ctx->use_factory)
+        apply_factory_layout(ctx->app);
+    else if (!apply_saved_layout(ctx->app))
+        apply_factory_layout(ctx->app);
+    refresh_menu_bar_chrome(ctx->app);
+
+    if (ctx->retries_left > 0) {
+        ctx->retries_left--;
+        return G_SOURCE_CONTINUE;
+    }
+    g_free(ctx);
     return G_SOURCE_REMOVE;
+}
+
+static void
+schedule_layout_retry(DemoApp *app, gboolean use_factory)
+{
+    if (!app->use_separate_menu_bar)
+        return;
+
+    LayoutRetryCtx *ctx = g_new0(LayoutRetryCtx, 1);
+    ctx->app = app;
+    ctx->use_factory = use_factory;
+    ctx->retries_left = 4; /* fires at 200ms, then again every 200ms up to ~1s total */
+    g_timeout_add(200, layout_retry_cb, ctx);
 }
 
 static GtkWidget *
@@ -924,11 +1044,16 @@ persistable_window_size(DemoWindow *win, int *width, int *height)
 void
 apply_window_size(DemoWindow *win, int width, int height)
 {
+    g_message("apply_window_size: %s -> %dx%d", win->id, width, height);
     gtk_window_set_default_size(GTK_WINDOW(win->window), width, height);
 }
 
-static void
-apply_factory_layout(DemoApp *app)
+/* Last-resort fallback used by both backends' apply_factory_layout() when
+ * app->factory_config_path itself is missing/unreadable (incomplete
+ * provisioning), so RESET never silently no-ops. No position -- plain GTK4
+ * default size only, same as before the factory-profile file existed. */
+void
+apply_minimal_factory_layout(DemoApp *app)
 {
     for (guint i = 0; i < WIN_COUNT; i++) {
         DemoWindow *win = &app->windows[i];
@@ -959,9 +1084,13 @@ show_default_windows(DemoApp *app)
         update_control_button_state(win);
     }
 
-    if (app->windows[WIN_RADAR].visible && !app->windows[WIN_RADAR].minimized)
-        gtk_window_present(GTK_WINDOW(app->windows[WIN_RADAR].window));
-
+    /* No gtk_window_present() for radar here (unlike the other windows
+     * below): radar is always shown via gtk_widget_set_visible() above and
+     * never needs raising -- on the gnome-shell build it's now
+     * Meta.WindowType.DESKTOP (see ConfigureKioskChrome), and present()'s
+     * "map/raise me as a normal interactive window" semantics conflict
+     * with that, observed live (2026-08-18) to cause a visible transient
+     * wrong-size flicker before ConfigureKioskChrome's next fix-up landed. */
     for (guint i = 0; i < WIN_COUNT; i++) {
         if (i != WIN_RADAR && app->windows[i].visible && !app->windows[i].minimized)
             gtk_window_present(GTK_WINDOW(app->windows[i].window));
@@ -974,6 +1103,7 @@ demo_app_activate(GtkApplication *application, gpointer user_data)
     DemoApp *app = user_data;
     app->application = application;
     app->config_path = config_path_for_app();
+    app->factory_config_path = factory_config_path_for_app();
 
     apply_css(app);
     build_windows(app);
@@ -992,8 +1122,10 @@ demo_app_activate(GtkApplication *application, gpointer user_data)
          * the corresponding Meta.Window within this same call stack. A
          * ConfigureKioskChrome call issued synchronously here can (and in
          * testing, does) race ahead of that and silently find no window
-         * to pin/resize. Defer to let the map complete first. */
-        g_timeout_add(200, initial_menu_bar_chrome_cb, app);
+         * to pin/resize. Defer to let the map complete first. Also retries
+         * the layout-position application itself for the same reason --
+         * see schedule_layout_retry(). */
+        schedule_layout_retry(app, FALSE);
     }
 
     app->radar_tick_id = g_timeout_add(1000, on_radar_tick, app);
