@@ -1,0 +1,66 @@
+---
+- name: Check demo app systemd user service
+  ansible.builtin.command:
+    cmd: systemctl --user -M {{ kiosk_user }}@ is-active {{ app_name }}.service
+  register: demo_service
+  changed_when: false
+  failed_when: false
+
+- name: Assert demo app service is active
+  ansible.builtin.assert:
+    that:
+      - demo_service.stdout == 'active'
+    fail_msg: "{{ app_name }}.service is not active: {{ demo_service.stdout | default('') }}"
+
+- name: Check session focus-guard systemd user service
+  ansible.builtin.command:
+    cmd: systemctl --user -M {{ kiosk_user }}@ is-active gnomekiosk-session-focus-guard.service
+  register: focus_guard_service
+  changed_when: false
+  failed_when: false
+
+- name: Assert session focus-guard service is active
+  ansible.builtin.assert:
+    that:
+      - focus_guard_service.stdout == 'active'
+    fail_msg: "gnomekiosk-session-focus-guard.service is not active: {{ focus_guard_service.stdout | default('') }}"
+
+- name: Ping Kiosk Layout Helper over D-Bus
+  ansible.builtin.command:
+    argv:
+      - busctl
+      - --user
+      - -M
+      - "{{ kiosk_user }}@"
+      - call
+      - org.gnomekiosk.LayoutHelper
+      - /org/gnomekiosk/LayoutHelper
+      - org.gnomekiosk.LayoutHelper.Ping
+  register: layout_helper_ping
+  changed_when: false
+
+- name: Assert Kiosk Layout Helper extension responds
+  ansible.builtin.assert:
+    that:
+      - "'kiosk-layout-helper/1' in layout_helper_ping.stdout"
+    fail_msg: "LayoutHelper Ping failed: {{ layout_helper_ping.stdout | default('') }} {{ layout_helper_ping.stderr | default('') }}"
+
+- name: Verify RDP port is listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 3389
+    timeout: 5
+    state: started
+
+- name: Check recent demo service journal for failures
+  ansible.builtin.command:
+    cmd: journalctl --user -M {{ kiosk_user }}@ -u {{ app_name }}.service --since "2 min ago" --no-pager
+  register: demo_journal
+  changed_when: false
+
+- name: Assert no recent demo service failures in journal
+  ansible.builtin.assert:
+    that:
+      - demo_journal.stdout is not search('Failed')
+      - demo_journal.stdout is not search('core dumped')
+    fail_msg: "Recent journal errors for {{ app_name }}: {{ demo_journal.stdout }}"

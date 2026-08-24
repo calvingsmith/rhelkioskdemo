@@ -1,0 +1,5 @@
+---
+- name: Provision gnome-kiosk VM
+  hosts: gnome_kiosk_hosts
+  roles:
+    - gnome_kiosk

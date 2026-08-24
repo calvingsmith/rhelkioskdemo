@@ -1,0 +1,23 @@
+---
+- name: Build demo binary on controller
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    deploy_skip_build: false
+    deploy_target: kiosk
+  tasks:
+    - name: Build gnome-kiosk binary
+      community.general.make:
+        chdir: "{{ playbook_dir }}/.."
+      when:
+        - not deploy_skip_build | bool
+        - deploy_target == 'kiosk'
+
+    - name: Build gnome-shell binary
+      community.general.make:
+        chdir: "{{ playbook_dir }}/.."
+        target: shell
+      when:
+        - not deploy_skip_build | bool
+        - deploy_target == 'shell'

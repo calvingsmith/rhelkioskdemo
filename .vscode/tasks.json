@@ -26,6 +26,170 @@
         "$gcc"
       ],
       "dependsOn": "Meson: setup or reconfigure"
+    },
+    {
+      "label": "Build: gnome-kiosk",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-build.yml",
+        "-e",
+        "deploy_target=kiosk"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "Build: gnome-shell",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-build.yml",
+        "-e",
+        "deploy_target=shell"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "Deploy: kiosk (app)",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-deploy.yml",
+        "-l",
+        "rhel10",
+        "-e",
+        "deploy_component=app",
+        "-e",
+        "deploy_target=kiosk"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy: shell (app)",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-deploy.yml",
+        "-l",
+        "rhel10-atop",
+        "-e",
+        "deploy_component=app",
+        "-e",
+        "deploy_target=shell"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy: shell (extension)",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-deploy.yml",
+        "-l",
+        "rhel10-atop",
+        "-e",
+        "deploy_component=extension",
+        "-e",
+        "deploy_target=shell",
+        "-e",
+        "deploy_skip_build=true"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Verify: kiosk",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-verify.yml",
+        "-l",
+        "rhel10"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Verify: shell",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-verify.yml",
+        "-l",
+        "rhel10-atop"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Iterate: kiosk",
+      "dependsOn": [
+        "Deploy: kiosk (app)",
+        "Verify: kiosk"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Iterate: shell",
+      "dependsOn": [
+        "Deploy: shell (app)",
+        "Verify: shell"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "Provision: kiosk (infra)",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-gnome-kiosk.yml",
+        "-l",
+        "rhel10"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Provision: shell (infra)",
+      "type": "shell",
+      "command": "ansible-playbook",
+      "args": [
+        "playbook-gnome-shell.yml",
+        "-l",
+        "rhel10-atop"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}/ansible"
+      },
+      "problemMatcher": []
     }
   ]
 }

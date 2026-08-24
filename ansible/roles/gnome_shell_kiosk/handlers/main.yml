@@ -2,3 +2,22 @@
 - name: dconf update
   ansible.builtin.command: dconf update
   become: true
+
+- name: restart demo app
+  ansible.builtin.systemd:
+    name: "{{ app_name }}.service"
+    state: restarted
+    scope: user
+  become: true
+  become_user: "{{ kiosk_user }}"
+
+- name: reload kiosk extension
+  ansible.builtin.shell: |
+    set -e
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+    gnome-extensions disable '{{ extension_uuid }}' || true
+    gnome-extensions enable '{{ extension_uuid }}'
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ kiosk_user }}"

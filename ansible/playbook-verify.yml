@@ -1,0 +1,6 @@
+---
+- name: Verify kiosk and shell demo VMs
+  hosts: gnome_kiosk_hosts:gnome_shell_hosts
+  gather_facts: false
+  roles:
+    - kiosk_verify

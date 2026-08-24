@@ -1,0 +1,22 @@
+---
+- name: dconf update
+  ansible.builtin.command: dconf update
+  become: true
+
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+
+- name: reload sshd
+  ansible.builtin.systemd:
+    name: sshd
+    state: reloaded
+  become: true
+
+- name: restart kiosk app
+  ansible.builtin.command: pkill gnomekiosk-demo
+  become: true
+  become_user: "{{ kiosk_user }}"
+  failed_when: false
+  changed_when: true
