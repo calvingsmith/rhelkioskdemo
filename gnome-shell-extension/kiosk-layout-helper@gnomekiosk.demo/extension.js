@@ -210,10 +210,26 @@ export default class KioskLayoutHelperExtension extends Extension {
         const found = findWindows();
         for (const [title, x, y, width, height, minimized, maximized] of windows) {
             const win = found.find(w => w.get_title() === title);
-            if (!win)
+            if (!win) {
+                console.log(`[kiosk-layout-helper] SetStates: '${title}' NOT FOUND in findWindows()`);
                 continue;
+            }
+
+            // TEMPORARY diagnostic (2026-08-18): GROUND OPS/SYSTEM STATUS
+            // observed to silently ignore move_resize_frame() -- log
+            // before/after frame rect plus whatever might be blocking it,
+            // rather than guessing further.
+            const before = win.get_frame_rect();
+            console.log(`[kiosk-layout-helper] SetStates: '${title}' before=${before.x},${before.y},${before.width}x${before.height} `
+                + `allows_move=${win.allows_move()} allows_resize=${win.allows_resize()} is_hidden=${win.is_hidden()} `
+                + `is_maximized=${win.is_maximized()} monitor=${win.get_monitor()} workspace=${win.get_workspace()?.index()} `
+                + `on_all_workspaces=${win.is_on_all_workspaces()} minimized=${win.minimized}`);
 
             win.move_resize_frame(true, x, y, width, height);
+
+            const after = win.get_frame_rect();
+            console.log(`[kiosk-layout-helper] SetStates: '${title}' requested=${x},${y},${width}x${height} `
+                + `after=${after.x},${after.y},${after.width}x${after.height}`);
 
             if (maximized)
                 win.maximize(Meta.MaximizeFlags.HORIZONTAL | Meta.MaximizeFlags.VERTICAL);
@@ -280,7 +296,17 @@ export default class KioskLayoutHelperExtension extends Extension {
                 radar.unmaximize(); // unmaximize() takes no arguments on this Mutter version
             radar.move_resize_frame(true, monitor.x, monitor.y + barHeight,
                 monitor.width, monitor.height - barHeight);
-            radar.lower(); // radar is a pure background layer, never in front
+            // Radar is meant to be a true background layer, not a normal
+            // window an operator can click-to-focus (which previously
+            // raised it above everything else, hiding all other windows
+            // even though they stayed visible=true). DESKTOP is Mutter's
+            // real, documented type for exactly this -- the same
+            // convention desktop-icon-manager apps use -- confirmed to
+            // exist via direct introspection against this VM's actual
+            // Meta-17 typelib (2026-08-18), not assumed. lower() is kept
+            // as a defense-in-depth belt-and-suspenders alongside it.
+            radar.set_type(Meta.WindowType.DESKTOP);
+            radar.lower();
         }
     }
 }

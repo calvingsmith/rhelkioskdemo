@@ -7,11 +7,16 @@
 
 #include "demo-common.h"
 
-gboolean
-apply_saved_layout(DemoApp *app)
+/* Shared by apply_saved_layout() (user's layout.ini) and
+ * apply_factory_layout() (admin-provisioned layout-factory.ini) -- same
+ * file format, same fields, just a different path. gnome-kiosk has no
+ * position control at all (see CLAUDE.md "Layout persistence behavior"),
+ * so x/y keys in either file are simply not read here. */
+static gboolean
+apply_layout_from_path(DemoApp *app, const char *path)
 {
     g_autoptr(GKeyFile) keyfile = g_key_file_new();
-    if (!g_key_file_load_from_file(keyfile, app->config_path, G_KEY_FILE_NONE, NULL))
+    if (!g_key_file_load_from_file(keyfile, path, G_KEY_FILE_NONE, NULL))
         return FALSE;
 
     for (guint i = 0; i < WIN_COUNT; i++) {
@@ -37,6 +42,21 @@ apply_saved_layout(DemoApp *app)
 
         update_control_button_state(win);
     }
+    return TRUE;
+}
+
+gboolean
+apply_saved_layout(DemoApp *app)
+{
+    return apply_layout_from_path(app, app->config_path);
+}
+
+gboolean
+apply_factory_layout(DemoApp *app)
+{
+    if (apply_layout_from_path(app, app->factory_config_path))
+        return TRUE;
+    apply_minimal_factory_layout(app);
     return TRUE;
 }
 
