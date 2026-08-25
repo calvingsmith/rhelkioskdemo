@@ -7,5 +7,6 @@
   "C_Cpp.errorSquiggles": "enabled",
   "files.associations": {
     "*.h": "c"
-  }
+  },
+  "kafka.clusters.selected": "rosakafka-bG9jYWxob3N0OjkwOTI"
 }
