@@ -24,6 +24,17 @@ The codebase is split so the two targets can never accidentally affect each othe
 - **Local build tooling**: a C11 compiler, `pkg-config`, GTK4 development headers (`gtk4-devel` or equivalent), and either `make` or `meson` (>=1.2.0) + `ninja`.
 - **Ansible** on your dev machine, only if you're targeting the `gnome-shell` build (`pip install ansible` or your distro's package).
 
+## Editor setup (VS Code)
+
+`.vscode/settings.json` is checked in and shared by everyone — it intentionally has no machine-specific absolute paths in it. If the Ansible extension reports it can't find `ansible`/`ansible-lint`/the Python interpreter (common when they're installed via `pip install --user`, since `~/.local/bin` often isn't on `$PATH` for a GUI-launched VS Code), don't add the paths to the workspace file. Add them to your personal **User** settings instead (Command Palette → "Preferences: Open User Settings (JSON)") — VS Code layers workspace settings over user settings, so this affects only your machine and never touches the shared file:
+```json
+{
+  "ansible.python.interpreterPath": "/home/<you>/.local/bin/python3",
+  "ansible.ansible.path": "/home/<you>/.local/bin/ansible",
+  "ansible.validation.lint.path": "/home/<you>/.local/bin/ansible-lint"
+}
+```
+
 ## Configuring SSH/Ansible access to a target VM
 
 All target VMs use the same convention: a dedicated `ansible` admin account, NOPASSWD sudo, and one shared SSH key pair. `kioskusr` (the account the demo actually runs as) is created and managed *by* the provisioning, not used to provision.

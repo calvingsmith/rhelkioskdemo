@@ -1,5 +1,5 @@
 {
-  "C_Cpp.default.compileCommands": "/home/plarsen/labs/gnomekiosk-demo/builddir/compile_commands.json",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/builddir/compile_commands.json",
   "C_Cpp.default.configurationProvider": "mesonbuild.mesonbuild",
   "C_Cpp.default.compilerPath": "/usr/bin/cc",
   "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
@@ -7,9 +7,5 @@
   "C_Cpp.errorSquiggles": "enabled",
   "files.associations": {
     "*.h": "c"
-  },
-  "kafka.clusters.selected": "rosakafka-bG9jYWxob3N0OjkwOTI",
-  "ansible.python.interpreterPath": "/usr/bin/python3",
-  "ansible.ansible.path": "/home/plarsen/.local/bin/ansible",
-  "ansible.validation.lint.path": "/home/plarsen/.local/bin/ansible-lint"
+  }
 }
