@@ -8,5 +8,8 @@
   "files.associations": {
     "*.h": "c"
   },
-  "kafka.clusters.selected": "rosakafka-bG9jYWxob3N0OjkwOTI"
+  "kafka.clusters.selected": "rosakafka-bG9jYWxob3N0OjkwOTI",
+  "ansible.python.interpreterPath": "/usr/bin/python3",
+  "ansible.ansible.path": "/home/plarsen/.local/bin/ansible",
+  "ansible.validation.lint.path": "/home/plarsen/.local/bin/ansible-lint"
 }
