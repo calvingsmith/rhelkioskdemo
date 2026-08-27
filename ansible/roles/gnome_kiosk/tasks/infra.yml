@@ -74,14 +74,19 @@
   tags:
     - infra
 
-- name: Install demo app binary
+- name: Deploy factory layout config
   ansible.builtin.copy:
-    src: "{{ app_bin_local }}"
-    dest: "/home/{{ kiosk_user }}/.local/bin/{{ app_name }}"
+    src: layout-factory.ini
+    dest: "/home/{{ kiosk_user }}/.config/gnome-kiosk-demo/layout-factory.ini"
     owner: "{{ kiosk_user }}"
     group: "{{ kiosk_user }}"
-    mode: "0755"
+    mode: "0644"
   become: true
+  tags:
+    - infra
+
+- name: Install demo app binary
+  ansible.builtin.include_tasks: app.yml
   tags:
     - infra
 

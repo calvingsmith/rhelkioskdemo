@@ -82,6 +82,17 @@
 - name: Deploy Shell extension during full provision
   ansible.builtin.import_tasks: extension.yml
 
+- name: Deploy factory layout config
+  ansible.builtin.copy:
+    src: layout-factory.ini
+    dest: "/home/{{ kiosk_user }}/.config/gnome-kiosk-demo/layout-factory.ini"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0644"
+  become: true
+  tags:
+    - infra
+
 - name: Write remote-access credentials env file
   ansible.builtin.template:
     src: remote-access.env.j2
@@ -248,7 +259,10 @@
     immediate: true
     state: enabled
   become: true
-  ignore_errors: true
+  failed_when:
+    - kiosk_firewalld_rdp is failed
+    - "'firewalld is not running' not in (kiosk_firewalld_rdp.msg | default(''))"
+  register: kiosk_firewalld_rdp
   tags:
     - infra
 

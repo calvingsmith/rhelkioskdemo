@@ -1,9 +1,5 @@
 ---
-kiosk_user: kioskusr
-kiosk_password: welcome1
-
 app_name: gnomekiosk-demo
-app_bin_local: "{{ playbook_dir }}/../build/{{ app_name }}"
 launcher_script_local: "{{ playbook_dir }}/../scripts/gnome-kiosk-script.sh"
 
 enable_remote_access: "1"
@@ -20,16 +16,10 @@ ssh_tunnel_port_a: 5901
 ssh_tunnel_user_b: supervisor
 ssh_tunnel_password_b: supervisor
 ssh_tunnel_port_b: 5902
-rdp_username: kioskusr
-rdp_password: welcome1
 vnc_password: welcome1
 vnc_auth_method: password
-keyring_password: welcome1
 reset_keyring: true
 
-deploy_component: app
-deploy_reboot: false
-deploy_skip_build: false
 deploy_target: kiosk
 
 # auto: runtime checks only when gnome-kiosk-script is installed (full provision)

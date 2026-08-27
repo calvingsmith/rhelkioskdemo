@@ -15,7 +15,7 @@
   become: true
 
 - name: restart kiosk app
-  ansible.builtin.command: pkill gnomekiosk-demo
+  ansible.builtin.command: pkill {{ app_name }}
   become: true
   become_user: "{{ kiosk_user }}"
   failed_when: false
