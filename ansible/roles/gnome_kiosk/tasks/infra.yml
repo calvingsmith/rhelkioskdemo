@@ -163,7 +163,7 @@
     dest: /etc/dconf/db/local.d/00-kiosk-power
     mode: "0644"
   become: true
-  notify: dconf update
+  notify: Dconf update
   tags:
     - infra
 
@@ -173,7 +173,7 @@
     dest: /etc/dconf/db/local.d/02-kiosk-window-placement
     mode: "0644"
   become: true
-  notify: dconf update
+  notify: Dconf update
   tags:
     - infra
 
@@ -183,7 +183,7 @@
     dest: /etc/dconf/db/local.d/01-kiosk-remote-desktop
     mode: "0644"
   become: true
-  notify: dconf update
+  notify: Dconf update
   tags:
     - infra
 
@@ -206,7 +206,7 @@
     dest: /etc/systemd/system/gnomekiosk-vnc-fanout@.service
     mode: "0644"
   become: true
-  notify: reload systemd
+  notify: Reload systemd
   tags:
     - infra
 
@@ -215,7 +215,7 @@
     path: /etc/systemd/system/gnomekiosk-vnc-fanout@.socket
     state: absent
   become: true
-  notify: reload systemd
+  notify: Reload systemd
   tags:
     - infra
 
@@ -263,7 +263,11 @@
     immediate: true
     state: enabled
   become: true
-  ignore_errors: true
+  register: gnome_kiosk_firewalld_rdp
+  failed_when:
+    - gnome_kiosk_firewalld_rdp is failed
+    - gnome_kiosk_firewalld_rdp.msg | default('') | length > 0
+    - "'not running' not in (gnome_kiosk_firewalld_rdp.msg | default('') | lower)"
   tags:
     - infra
 
@@ -274,7 +278,11 @@
     immediate: true
     state: enabled
   become: true
-  ignore_errors: true
+  register: gnome_kiosk_firewalld_vnc
+  failed_when:
+    - gnome_kiosk_firewalld_vnc is failed
+    - gnome_kiosk_firewalld_vnc.msg | default('') | length > 0
+    - "'not running' not in (gnome_kiosk_firewalld_vnc.msg | default('') | lower)"
   tags:
     - infra
 
@@ -287,7 +295,11 @@
   become: true
   loop: "{{ vnc_fanout_ports }}"
   when: enable_vnc_fanout | bool
-  ignore_errors: true
+  register: gnome_kiosk_firewalld_fanout
+  failed_when:
+    - gnome_kiosk_firewalld_fanout is failed
+    - gnome_kiosk_firewalld_fanout.msg | default('') | length > 0
+    - "'not running' not in (gnome_kiosk_firewalld_fanout.msg | default('') | lower)"
   tags:
     - infra
 
@@ -319,7 +331,7 @@
     dest: /etc/ssh/sshd_config.d/90-gnomekiosk-vnc-tunnels.conf
     mode: "0644"
   become: true
-  notify: reload sshd
+  notify: Reload sshd
   when: enable_ssh_vnc_tunnels | bool
   tags:
     - infra
@@ -329,7 +341,7 @@
     path: /etc/ssh/sshd_config.d/90-gnomekiosk-vnc-tunnels.conf
     state: absent
   become: true
-  notify: reload sshd
+  notify: Reload sshd
   when: not enable_ssh_vnc_tunnels | bool
   tags:
     - infra

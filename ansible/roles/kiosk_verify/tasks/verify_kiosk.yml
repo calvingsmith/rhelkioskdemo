@@ -2,6 +2,7 @@
 - name: Verify demo binary is installed
   ansible.builtin.stat:
     path: "/home/{{ kiosk_user }}/.local/bin/{{ app_name }}"
+  become: true
   register: kiosk_verify_binary_stat
 
 - name: Assert demo binary is installed
@@ -15,6 +16,7 @@
 - name: Check whether kiosk session has been provisioned
   ansible.builtin.stat:
     path: "/home/{{ kiosk_user }}/.local/bin/gnome-kiosk-script"
+  become: true
   register: kiosk_verify_launcher_stat
 
 - name: Determine whether to run runtime verification

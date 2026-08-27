@@ -15,6 +15,6 @@
     group: "{{ kiosk_user }}"
     mode: "0644"
   become: true
-  notify: reload kiosk extension
+  notify: Reload kiosk extension
   tags:
     - extension

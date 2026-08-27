@@ -225,7 +225,7 @@
     dest: /etc/dconf/db/local.d/00-kiosk-power
     mode: "0644"
   become: true
-  notify: dconf update
+  notify: Dconf update
   tags:
     - infra
 
@@ -235,7 +235,7 @@
     dest: /etc/dconf/db/local.d/01-kiosk-lockdown
     mode: "0644"
   become: true
-  notify: dconf update
+  notify: Dconf update
   tags:
     - infra
 
@@ -259,10 +259,11 @@
     immediate: true
     state: enabled
   become: true
+  register: gnome_shell_kiosk_firewalld_rdp
   failed_when:
-    - kiosk_firewalld_rdp is failed
-    - "'firewalld is not running' not in (kiosk_firewalld_rdp.msg | default(''))"
-  register: kiosk_firewalld_rdp
+    - gnome_shell_kiosk_firewalld_rdp is failed
+    - gnome_shell_kiosk_firewalld_rdp.msg | default('') | length > 0
+    - "'not running' not in (gnome_shell_kiosk_firewalld_rdp.msg | default('') | lower)"
   tags:
     - infra
 

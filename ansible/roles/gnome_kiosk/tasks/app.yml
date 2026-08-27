@@ -18,6 +18,6 @@
     group: "{{ kiosk_user }}"
     mode: "0755"
   become: true
-  notify: restart kiosk app
+  notify: Restart kiosk app
   tags:
     - app

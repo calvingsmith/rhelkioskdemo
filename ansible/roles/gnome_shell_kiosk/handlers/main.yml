@@ -1,17 +1,17 @@
 ---
-- name: dconf update
+- name: Dconf update  # noqa: no-changed-when
   ansible.builtin.command: dconf update
   become: true
 
-- name: restart demo app
+- name: Restart demo app  # noqa: command-instead-of-module
   ansible.builtin.command:
     cmd: systemctl --user -M {{ kiosk_user }}@ restart {{ app_name }}.service
   become: true
-  register: restart_demo_app_result
-  changed_when: restart_demo_app_result.rc == 0
+  register: gnome_shell_kiosk_restart_result
+  changed_when: gnome_shell_kiosk_restart_result.rc == 0
   failed_when: false
 
-- name: reload kiosk extension
+- name: Reload kiosk extension
   ansible.builtin.shell: |
     set -e
     uid=$(id -u {{ kiosk_user }})
