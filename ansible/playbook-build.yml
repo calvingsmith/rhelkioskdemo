@@ -1,4 +1,11 @@
 ---
+- name: Pre-flight variable validation
+  hosts: all
+  connection: local
+  gather_facts: false
+  roles:
+    - { role: preflight, run_once: true }
+
 - name: Build demo binary on controller
   hosts: localhost
   connection: local

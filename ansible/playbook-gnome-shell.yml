@@ -1,4 +1,11 @@
 ---
+- name: Pre-flight variable validation
+  hosts: all
+  connection: local
+  gather_facts: false
+  roles:
+    - { role: preflight, run_once: true }
+
 - name: Provision gnome-shell kiosk VM
   hosts: gnome_shell_hosts
   roles:

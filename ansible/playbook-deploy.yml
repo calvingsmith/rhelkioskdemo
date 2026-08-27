@@ -1,4 +1,11 @@
 ---
+- name: Pre-flight variable validation
+  hosts: all
+  connection: local
+  gather_facts: false
+  roles:
+    - { role: preflight, run_once: true }
+
 - name: Build demo binary on controller
   hosts: localhost
   connection: local
@@ -55,13 +62,13 @@
       when: deploy_target == 'shell'
 
 - name: Optional forced reboot after deploy
-  hosts: "{{ (deploy_target == 'kiosk') | ternary('gnome_kiosk_hosts', 'gnome_shell_hosts') }}"
+  hosts: gnome_kiosk_hosts:gnome_shell_hosts
   gather_facts: false
   vars:
     deploy_reboot: false
-    deploy_target: shell
   tasks:
     - name: Reboot host to pick up changes
       ansible.builtin.reboot:
         reboot_timeout: 180
+      become: true
       when: deploy_reboot | bool

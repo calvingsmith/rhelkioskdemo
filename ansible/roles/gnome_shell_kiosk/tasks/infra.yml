@@ -1,4 +1,16 @@
 ---
+# Import the repo key with rpm --import before DNF so libdnf does not have to
+# parse /etc/pki/rpm-gpg/* itself. RHEL 10 Sequoia rejects
+# ISV-Container-signing-key (text preamble + armor), which is the
+# "Parsing armored OpenPGP packet(s) failed" failure.
+- name: Import Red Hat release GPG key
+  ansible.builtin.rpm_key:
+    key: /etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+    state: present
+  become: true
+  tags:
+    - infra
+
 - name: Install required packages
   ansible.builtin.dnf:
     name:
@@ -9,6 +21,7 @@
       - gnome-remote-desktop
       - openssl
       - seahorse
+      - python3-firewall
     state: present
   become: true
   tags:
@@ -117,6 +130,17 @@
   ansible.builtin.copy:
     src: gnomekiosk-session-focus-guard.sh
     dest: "/home/{{ kiosk_user }}/.local/bin/gnomekiosk-session-focus-guard.sh"
+    owner: "{{ kiosk_user }}"
+    group: "{{ kiosk_user }}"
+    mode: "0755"
+  become: true
+  tags:
+    - infra
+
+- name: Install Wayland readiness wait script
+  ansible.builtin.copy:
+    src: gnomekiosk-wait-wayland.sh
+    dest: "/home/{{ kiosk_user }}/.local/bin/gnomekiosk-wait-wayland.sh"
     owner: "{{ kiosk_user }}"
     group: "{{ kiosk_user }}"
     mode: "0755"

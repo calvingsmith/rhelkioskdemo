@@ -4,20 +4,22 @@
   become: true
 
 - name: restart demo app
-  ansible.builtin.systemd:
-    name: "{{ app_name }}.service"
-    state: restarted
-    scope: user
+  ansible.builtin.command:
+    cmd: systemctl --user -M {{ kiosk_user }}@ restart {{ app_name }}.service
   become: true
-  become_user: "{{ kiosk_user }}"
+  register: restart_demo_app_result
+  changed_when: restart_demo_app_result.rc == 0
+  failed_when: false
 
 - name: reload kiosk extension
   ansible.builtin.shell: |
     set -e
-    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
-    gnome-extensions disable '{{ extension_uuid }}' || true
-    gnome-extensions enable '{{ extension_uuid }}'
+    uid=$(id -u {{ kiosk_user }})
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus"
+    runuser -u {{ kiosk_user }} -- gnome-extensions disable '{{ extension_uuid }}' || true
+    runuser -u {{ kiosk_user }} -- gnome-extensions enable '{{ extension_uuid }}'
   args:
     executable: /bin/bash
   become: true
-  become_user: "{{ kiosk_user }}"
+  changed_when: true
+  failed_when: false

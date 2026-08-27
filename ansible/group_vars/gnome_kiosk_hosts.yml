@@ -1,5 +1,5 @@
 ---
-kiosk_user: cloud-user
+kiosk_user: kioskusr
 kiosk_password: welcome1
 
 app_name: gnomekiosk-demo
