@@ -12,7 +12,18 @@
       - openssl
       - seahorse
       - socat
+      - firewalld
+      - python3-firewall
     state: present
+  become: true
+  tags:
+    - infra
+
+- name: Ensure firewalld is running
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
   become: true
   tags:
     - infra
@@ -266,7 +277,6 @@
   register: gnome_kiosk_firewalld_rdp
   failed_when:
     - gnome_kiosk_firewalld_rdp is failed
-    - gnome_kiosk_firewalld_rdp.msg | default('') | length > 0
     - "'not running' not in (gnome_kiosk_firewalld_rdp.msg | default('') | lower)"
   tags:
     - infra
@@ -281,7 +291,6 @@
   register: gnome_kiosk_firewalld_vnc
   failed_when:
     - gnome_kiosk_firewalld_vnc is failed
-    - gnome_kiosk_firewalld_vnc.msg | default('') | length > 0
     - "'not running' not in (gnome_kiosk_firewalld_vnc.msg | default('') | lower)"
   tags:
     - infra
@@ -298,7 +307,6 @@
   register: gnome_kiosk_firewalld_fanout
   failed_when:
     - gnome_kiosk_firewalld_fanout is failed
-    - gnome_kiosk_firewalld_fanout.msg | default('') | length > 0
     - "'not running' not in (gnome_kiosk_firewalld_fanout.msg | default('') | lower)"
   tags:
     - infra

@@ -15,8 +15,7 @@
   become: true
 
 - name: Restart kiosk app
-  ansible.builtin.command: pkill {{ app_name }}
+  ansible.builtin.command: pkill -u {{ kiosk_user }} {{ app_name }}
   become: true
-  become_user: "{{ kiosk_user }}"
   failed_when: false
   changed_when: true
