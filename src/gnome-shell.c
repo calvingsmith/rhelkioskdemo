@@ -97,22 +97,30 @@ backend_set_window_minimized(DemoWindow *win, gboolean minimized)
         return;
 
     GDBusProxy *helper = get_layout_helper_proxy();
-    if (helper == NULL)
+    if (helper == NULL) {
+        g_message("backend_set_window_minimized: %s -> %d: no helper proxy", win->id, minimized);
         return;
+    }
 
     g_autoptr(GError) error = NULL;
     g_autoptr(GVariant) result = g_dbus_proxy_call_sync(
         helper, "SetWindowMinimized", g_variant_new("(sb)", win->title, minimized),
         G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
     if (result == NULL)
-        g_message("SetWindowMinimized failed: %s", error->message);
+        g_message("SetWindowMinimized failed for %s: %s", win->id, error->message);
+    else
+        g_message("SetWindowMinimized: %s -> %d ok", win->id, minimized);
 }
 
-gboolean
-apply_saved_layout(DemoApp *app)
+/* Shared by apply_saved_layout() (user's layout.ini) and
+ * apply_factory_layout() (admin-provisioned layout-factory.ini) -- same
+ * file format, same fields including position, just a different path.
+ * RESET and LOAD are the same operation with a different data source. */
+static gboolean
+apply_layout_from_path(DemoApp *app, const char *path)
 {
     g_autoptr(GKeyFile) keyfile = g_key_file_new();
-    if (!g_key_file_load_from_file(keyfile, app->config_path, G_KEY_FILE_NONE, NULL))
+    if (!g_key_file_load_from_file(keyfile, path, G_KEY_FILE_NONE, NULL))
         return FALSE;
 
     GVariantBuilder builder;
@@ -123,20 +131,48 @@ apply_saved_layout(DemoApp *app)
         DemoWindow *win = &app->windows[i];
         win->visible = TRUE;
         win->minimized = FALSE;
-        if (g_key_file_has_key(keyfile, win->id, "width", NULL)) {
-            int width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
-            int height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
-            apply_window_size(win, width, height);
+
+        /* Read once, used for both the GTK-side apply and the D-Bus
+         * position/size request below -- previously the D-Bus block
+         * re-queried gtk_window_get_default_size() instead of reusing
+         * these, which silently sent a STALE size (whatever the window's
+         * size already was) instead of the actual target whenever the two
+         * differed (e.g. after a manual resize). GTK4's own docs only
+         * promise default-size is "kept in sync with live resizes" -- not
+         * that it reflects a just-issued set_default_size() synchronously,
+         * before the compositor round-trip completes. Confirmed live
+         * 2026-08-18: this exact mismatch is why move_resize_frame() had
+         * zero effect specifically on windows the user had just manually
+         * resized (GROUND OPS/SYSTEM STATUS), while windows still at their
+         * unchanged default size appeared to work fine by coincidence. */
+        int width = win->default_width, height = win->default_height;
+        gboolean have_size = g_key_file_has_key(keyfile, win->id, "width", NULL);
+        if (have_size) {
+            width = g_key_file_get_integer(keyfile, win->id, "width", NULL);
+            height = g_key_file_get_integer(keyfile, win->id, "height", NULL);
         }
+
+        /* Radar's geometry/type are entirely owned by ConfigureKioskChrome
+         * (move_resize_frame() + Meta.WindowType.DESKTOP), run moments
+         * later via the retry-deferred callback. Plain GTK4
+         * apply_window_size()/maximize() requests below are redundant for
+         * it and were observed live (2026-08-18) to cause a visible
+         * transient wrong-size glitch before ConfigureKioskChrome's
+         * authoritative fix-up landed -- skip them for radar entirely. */
+        if (win->kind != WIN_RADAR && have_size)
+            apply_window_size(win, width, height);
+
         if (g_key_file_has_key(keyfile, win->id, "visible", NULL))
             win->visible = g_key_file_get_boolean(keyfile, win->id, "visible", NULL);
         gboolean maximized = FALSE;
         if (g_key_file_has_key(keyfile, win->id, "maximized", NULL)) {
             maximized = g_key_file_get_boolean(keyfile, win->id, "maximized", NULL);
-            if (maximized)
-                gtk_window_maximize(GTK_WINDOW(win->window));
-            else
-                gtk_window_unmaximize(GTK_WINDOW(win->window));
+            if (win->kind != WIN_RADAR) {
+                if (maximized)
+                    gtk_window_maximize(GTK_WINDOW(win->window));
+                else
+                    gtk_window_unmaximize(GTK_WINDOW(win->window));
+            }
         }
         if (g_key_file_has_key(keyfile, win->id, "minimized", NULL))
             win->minimized = g_key_file_get_boolean(keyfile, win->id, "minimized", NULL);
@@ -149,8 +185,8 @@ apply_saved_layout(DemoApp *app)
             g_key_file_has_key(keyfile, win->id, "y", NULL)) {
             int x = g_key_file_get_integer(keyfile, win->id, "x", NULL);
             int y = g_key_file_get_integer(keyfile, win->id, "y", NULL);
-            int width = 0, height = 0;
-            gtk_window_get_default_size(GTK_WINDOW(win->window), &width, &height);
+            g_message("apply_layout_from_path: queueing %s title='%s' x=%d y=%d w=%d h=%d minimized=%d maximized=%d",
+                win->id, win->title, x, y, width, height, win->minimized, maximized);
             g_variant_builder_add(&builder, "(siiiibb)",
                 win->title, x, y, width, height, win->minimized, maximized);
             have_positions = TRUE;
@@ -168,6 +204,8 @@ apply_saved_layout(DemoApp *app)
                 G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
             if (result == NULL)
                 g_message("SetStates failed: %s", error->message);
+            else
+                g_message("SetStates: call returned ok");
         } else {
             g_variant_builder_clear(&builder);
         }
@@ -175,6 +213,21 @@ apply_saved_layout(DemoApp *app)
         g_variant_builder_clear(&builder);
     }
 
+    return TRUE;
+}
+
+gboolean
+apply_saved_layout(DemoApp *app)
+{
+    return apply_layout_from_path(app, app->config_path);
+}
+
+gboolean
+apply_factory_layout(DemoApp *app)
+{
+    if (apply_layout_from_path(app, app->factory_config_path))
+        return TRUE;
+    apply_minimal_factory_layout(app);
     return TRUE;
 }
 
