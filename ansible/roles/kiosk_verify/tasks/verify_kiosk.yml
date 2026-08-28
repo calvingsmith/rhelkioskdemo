@@ -51,6 +51,9 @@
   register: kiosk_verify_demo_pgrep
   changed_when: false
   failed_when: false
+  retries: 12
+  delay: 10
+  until: kiosk_verify_demo_pgrep.rc == 0
   when: kiosk_verify_runtime | bool
 
 - name: Assert kiosk demo process is running

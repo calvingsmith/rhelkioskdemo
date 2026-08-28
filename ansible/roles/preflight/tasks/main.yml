@@ -15,6 +15,10 @@
          | select('equalto', 'change-me') | list
          | map('regex_replace', '.*', 'ansible_host (one or more hosts)') | list | unique)
         +
+         (groups['all'] | map('extract', hostvars, 'ansible_user')
+         | select('equalto', 'change-me') | list
+         | map('regex_replace', '.*', 'ansible_user (one or more hosts)') | list | unique)
+        +
         (groups['all'] | map('extract', hostvars, 'ansible_ssh_private_key_file')
          | select('defined') | select('equalto', 'change-me') | list
          | map('regex_replace', '.*', 'ansible_ssh_private_key_file') | list | unique)

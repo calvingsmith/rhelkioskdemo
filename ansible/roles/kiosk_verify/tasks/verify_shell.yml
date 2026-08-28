@@ -164,6 +164,9 @@
   register: kiosk_verify_layout_helper_ping
   changed_when: false
   failed_when: false
+  retries: 6
+  delay: 5
+  until: "'kiosk-layout-helper/1' in kiosk_verify_layout_helper_ping.stdout"
   when: kiosk_verify_runtime | bool
 
 - name: Assert Kiosk Layout Helper extension responds
