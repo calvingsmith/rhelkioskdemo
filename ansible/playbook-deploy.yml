@@ -1,3 +1,9 @@
+# Fast iterative deploy. Builds the binary locally, copies it (and/or the
+# extension) to the target VM, and restarts the app without a full
+# provision or reboot. Use -l to limit to a single host and -e to set
+# deploy_target (kiosk|shell), deploy_component (app|extension|all),
+# deploy_skip_build (true to skip the build step), and deploy_reboot
+# (true to force a reboot after deploy).
 ---
 - name: Pre-flight variable validation
   hosts: all

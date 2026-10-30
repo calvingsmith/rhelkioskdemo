@@ -1,3 +1,8 @@
+# Full provision for gnome-kiosk VMs. Installs packages, creates the
+# kiosk user, deploys the binary and launcher, configures dconf/GDM/
+# remote access/firewall, and reboots. Defaults to the first host in
+# gnome_kiosk_hosts when no -l is given; pass -l to target a different
+# host or -l 'host1,host2' for multiple.
 ---
 - name: Pre-flight variable validation
   hosts: all
@@ -7,6 +12,6 @@
     - { role: preflight, run_once: true }
 
 - name: Provision gnome-kiosk VM
-  hosts: gnome_kiosk_hosts
+  hosts: "{{ ansible_limit | default(groups['gnome_kiosk_hosts'][0]) }}"
   roles:
     - gnome_kiosk
